@@ -1,0 +1,2335 @@
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { supabase } from '@/lib/supabase';
+import { BarChart3, Bell, Building2, Calculator, Check, ChevronRight, Clipboard, Database, FileText, Grid2X2, Image as ImageIcon, LayoutDashboard, LockKeyhole, LogOut, Menu, Package, Plus, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Tags, Trash2, Users, X, Zap } from 'lucide-react';
+
+type Role = 'admin' | 'seller';
+type Profile = { id: string; full_name: string; email: string; role: Role; is_active: boolean };
+type Machine = {
+  id: string; internal_code?: string | null; brand: string; model: string;
+  display_name: string; category: string; category_id?: string | null;
+  value: number; entry: number; installment: number; year: number;
+  status: string; image?: string; photos: MachinePhoto[];
+  power: string; weight: string; hours: string;
+  location: string; description?: string; notes?: string;
+  applications: string[]; specs: Record<string, string>;
+};
+type MachinePhoto = {
+  public_url?: string; storage_path?: string; is_primary?: boolean;
+  is_main?: boolean; photo_type?: string; image_url?: string;
+};
+type PendingPhoto = {
+  tempId: string;
+  preview: string;
+  file?: File;
+  id?: string;
+  machine_id?: string;
+  storage_path?: string;
+  source?: 'machine_photos' | 'machine_images';
+  is_primary?: boolean;
+  photo_type?: string;
+  public_url?: string;
+};
+type Brand = { id: string; name: string; logo_url?: string; accent_color: string; is_active: boolean };
+type Segment = { id: string; name: string; min_term: number; max_term: number };
+
+function normalizeStatus(s: string): string {
+  const key = s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (['disponivel', 'available', 'ativo'].includes(key)) return 'available';
+  if (['negociacao', 'emnegociacao', 'negotiating'].includes(key)) return 'negotiating';
+  if (['vendido', 'sold'].includes(key)) return 'sold';
+  if (['indisponivel', 'unavailable', 'inativo'].includes(key)) return 'unavailable';
+  return 'available';
+}
+
+function isPrincipalPhoto(p: MachinePhoto): boolean {
+  if (p.is_primary || p.is_main) return true;
+  if (typeof p.photo_type === 'string') {
+    const k = p.photo_type.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return k === 'principal';
+  }
+  return false;
+}
+
+function mapMachineRow(row: Record<string, unknown>): Machine {
+  const cats = row.categories as { name: string } | null | undefined;
+  let photos = (row.machine_photos as MachinePhoto[] | null | undefined) ?? [];
+  if (photos.length === 0) {
+    const fallbackImgs = row.machine_images as MachinePhoto[] | null | undefined;
+    if (Array.isArray(fallbackImgs) && fallbackImgs.length > 0) {
+      photos = fallbackImgs.map(i => ({
+        public_url: i.public_url ?? i.image_url,
+        storage_path: i.storage_path,
+        is_primary: isPrincipalPhoto(i),
+        photo_type: typeof i.photo_type === 'string' ? i.photo_type : 'other'
+      }));
+    }
+  }
+  const deduped: MachinePhoto[] = [];
+  const seen = new Set<string>();
+  for (const p of photos) {
+    const key = (p.public_url || '') + '|' + (p.storage_path || '');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(p);
+  }
+  const sortedPhotos: MachinePhoto[] = [];
+  const primary = deduped.find(isPrincipalPhoto);
+  if (primary) sortedPhotos.push(primary);
+  for (const p of deduped) if (p !== primary) sortedPhotos.push(p);
+  const mainPhoto = sortedPhotos[0];
+  return {
+    id: String(row.id),
+    internal_code: (row.internal_code ?? row.code) as string | null | undefined,
+    brand: String(row.brand ?? ''),
+    model: String(row.model ?? ''),
+    display_name: String(row.display_name ?? `${row.brand ?? ''} ${row.model ?? ''}`).trim(),
+    category: cats?.name || String(row.category ?? 'SEM CATEGORIA'),
+    category_id: row.category_id as string | null | undefined,
+    value: Number(row.value ?? row.price ?? 0),
+    entry: Number(row.down_payment ?? 0),
+    installment: Number(row.installment ?? 0),
+    year: Number(row.manufacture_year ?? row.year ?? new Date().getFullYear()),
+    status: normalizeStatus(String(row.status ?? 'available')),
+    power: String(row.power ?? 'Não informado'),
+    weight: String(row.operating_weight ?? 'Não informado'),
+    hours: String(row.hours ?? 'Não informado'),
+    location: String(row.location ?? 'Não informado'),
+    description: (row.description as string | undefined) ?? undefined,
+    notes: (row.notes as string | undefined) ?? undefined,
+    applications: (row.applications as string[]) || [],
+    specs: (row.specs as Record<string, string>) || {},
+    image: mainPhoto?.public_url,
+    photos: sortedPhotos,
+  };
+}
+
+const demoMachines: Machine[] = [
+  { id: 'm1', brand: 'VOLVO', model: '220D/DL', display_name: 'VOLVO 220D/DL', category: 'ESCAVADEIRA', value: 650900, entry: 56300, installment: 5900, year: 2023, status: 'available', image: 'https://images.pexels.com/photos/162568/construction-site-machinery-construction-work-162568.jpeg?auto=compress&cs=tinysrgb&w=900', photos: [{ public_url: 'https://images.pexels.com/photos/162568/construction-site-machinery-construction-work-162568.jpeg?auto=compress&cs=tinysrgb&w=900', is_primary: true }], power: '145 HP', weight: '22.000 kg', hours: '2.840 h', location: 'São Paulo, SP', applications: ['Terraplenagem', 'Infraestrutura', 'Saneamento'], specs: { Potência: '145 HP', 'Peso operacional': '22.000 kg', 'Profundidade máxima': '6,7 m', 'Alcance máximo': '9,9 m', Motor: 'Volvo D7', Transmissão: 'Hidrostática', 'Força de escavação': '15.200 kgf' } },
+  { id: 'm2', brand: 'CATERPILLAR', model: '320', display_name: 'CATERPILLAR 320', category: 'ESCAVADEIRA', value: 647000, entry: 50300, installment: 6000, year: 2024, status: 'available', image: 'https://images.pexels.com/photos/4481327/pexels-photo-4481327.jpeg?auto=compress&cs=tinysrgb&w=900', photos: [{ public_url: 'https://images.pexels.com/photos/4481327/pexels-photo-4481327.jpeg?auto=compress&cs=tinysrgb&w=900', is_primary: true }], power: '145 HP', weight: '21.600 kg', hours: '1.920 h', location: 'Goiânia, GO', applications: ['Terraplenagem', 'Abertura de valas', 'Mineração'], specs: { Potência: '145 HP', 'Peso operacional': '21.600 kg', 'Profundidade máxima': '6,7 m', 'Alcance máximo': '9,9 m', Motor: 'Cat C4.4', Transmissão: 'Hidrostática', 'Força de escavação': '14.800 kgf' } },
+  { id: 'm3', brand: 'VOLVO', model: 'EC140', display_name: 'VOLVO EC140', category: 'ESCAVADEIRA', value: 546000, entry: 49293.80, installment: 4942.12, year: 2022, status: 'available', power: '105 HP', weight: '14.200 kg', hours: '3.210 h', location: 'Curitiba, PR', applications: ['Terraplenagem', 'Infraestrutura'], specs: { Potência: '105 HP', 'Peso operacional': '14.200 kg', 'Profundidade máxima': '5,5 m', Motor: 'Volvo D4', Transmissão: 'Hidrostática' }, photos: [] },
+  { id: 'm4', brand: 'JCB', model: '3CX', display_name: 'JCB 3CX', category: 'RETROESCAVADEIRA', value: 389900, entry: 38990, installment: 3790, year: 2023, status: 'negotiating', power: '92 HP', weight: '8.070 kg', hours: '1.100 h', location: 'Belo Horizonte, MG', applications: ['Obras urbanas', 'Saneamento'], specs: { Potência: '92 HP', 'Peso operacional': '8.070 kg', Motor: 'JCB EcoMAX', Transmissão: 'Powershift' }, photos: [] },
+  { id: 'm5', brand: 'CASE', model: '580N', display_name: 'CASE 580N', category: 'RETROESCAVADEIRA', value: 368000, entry: 36800, installment: 3590, year: 2021, status: 'available', power: '85 HP', weight: '7.900 kg', hours: '4.120 h', location: 'Recife, PE', applications: ['Terraplenagem', 'Agricultura'], specs: { Potência: '85 HP', 'Peso operacional': '7.900 kg', Motor: 'FPT', Transmissão: 'Powershuttle' }, photos: [] },
+  { id: 'm6', brand: 'BOBCAT', model: 'S450', display_name: 'BOBCAT S450', category: 'MINI CARREGADEIRA', value: 239900, entry: 23990, installment: 2350, year: 2024, status: 'available', power: '49 HP', weight: '2.436 kg', hours: '320 h', location: 'São Paulo, SP', applications: ['Paisagismo', 'Obras urbanas'], specs: { Potência: '49 HP', 'Peso operacional': '2.436 kg', Motor: 'Kubota', Transmissão: 'Hidrostática' }, photos: [] },
+];
+
+const demoBrands: Brand[] = [
+  { id: 'b1', name: 'Eixo Consórcios', accent_color: '#B8963F', is_active: true },
+  { id: 'b2', name: 'Promova Online', accent_color: '#B8963F', is_active: true },
+];
+const demoSegments: Segment[] = [
+  { id: 's1', name: 'Bens Pesados', min_term: 12, max_term: 120 },
+  { id: 's2', name: 'Veículos', min_term: 12, max_term: 84 },
+  { id: 's3', name: 'Imóveis', min_term: 60, max_term: 240 },
+];
+const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const date = (value: string | Date) => new Date(value).toLocaleDateString('pt-BR');
+
+function Logo({ compact = false }: { compact?: boolean }) { return <div className="brand-lockup"><div className="brand-mark" style={{ padding: 0, overflow: 'hidden' }}><img src="/favicon.png" alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} /></div>{!compact && <div><strong>Eixo<span>-Catálogo</span></strong><small>OPERAÇÃO COMERCIAL</small></div>}</div>; }
+function Loading() { return <div className="loading-screen"><div className="spinner" /><span>Carregando seu ambiente...</span></div>; }
+
+async function getProfile(userId: string): Promise<Profile> {
+  // 1) Tenta TABELA NOVA usuarios_perfil (estrutura do usuário: id, nome, papel, criado_em)
+  let data: Record<string, unknown> | null = null;
+  let fallbackEmail: string | null = null;
+  try {
+    const sessRes = await supabase.auth.getSession();
+    const sess = (sessRes as { data?: { session?: { user?: { email?: string } } } }).data?.session;
+    if (sess?.user?.email) fallbackEmail = sess.user.email;
+  } catch { /* ignore */ }
+  const up = await supabase
+    .from('usuarios_perfil')
+    .select('id, nome, papel, criado_em')
+    .eq('id', userId)
+    .maybeSingle();
+  if (up.error) {
+    // 2) Fallback para tabela profiles antiga (compat retroativa)
+    const pf = await supabase
+      .from('profiles')
+      .select('id, name, full_name, email, role, active, is_active')
+      .eq('id', userId)
+      .maybeSingle();
+    if (pf.error || !pf.data) throw new Error('profile_missing');
+    const row = pf.data as Record<string, unknown>;
+    const rawRole = String(row.role ?? 'seller');
+    const profile: Profile = {
+      id: String(row.id),
+      full_name: String(row.full_name ?? row.name ?? ''),
+      email: String(row.email ?? fallbackEmail ?? ''),
+      role: (rawRole === 'vendedor' ? 'seller' : rawRole) as Role,
+      is_active: Boolean(row.is_active ?? row.active ?? true),
+    };
+    if (!profile.is_active) throw new Error('profile_inactive');
+    if (!profile.full_name) throw new Error('profile_missing');
+    return profile;
+  }
+  if (!up.data) throw new Error('profile_missing');
+  data = up.data as Record<string, unknown>;
+  const rawPapel = String(data.papel ?? 'vendedor').toLowerCase();
+  const profile: Profile = {
+    id: String(data.id),
+    full_name: String(data.nome ?? ''),
+    email: fallbackEmail ?? '',
+    role: (rawPapel === 'admin' || rawPapel === 'administrador' || rawPapel === 'adm') ? 'admin' : 'seller',
+    is_active: true,
+  };
+  if (!profile.full_name) throw new Error('profile_missing');
+  return profile;
+}
+
+function Auth({ onAuth }: { onAuth: (profile: Profile) => void }) {
+  const [mode, setMode] = useState<'login' | 'bootstrap'>('login');
+  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setError('');
+    if (password.length < 8 || !email || (mode === 'bootstrap' && name.trim().length < 2)) {
+      setError('Informe os dados obrigatórios corretamente.'); return;
+    }
+    setBusy(true);
+    try {
+      const response = mode === 'bootstrap'
+        ? await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              data: { nome: name.trim(), name: name.trim(), full_name: name.trim(), papel: 'admin' },
+              emailRedirectTo: location.origin,
+            }
+          })
+        : await supabase.auth.signInWithPassword({ email, password });
+      if (response.error || !response.data.user || !response.data.session) throw new Error('auth');
+      const user = response.data.user;
+      if (mode === 'bootstrap') {
+        // Garante linha em usuarios_perfil (trigger handle_new_user já deve ter criado, mas tenta explicitamente por seguranca)
+        try {
+          const { error: upErr } = await supabase
+            .from('usuarios_perfil')
+            .insert({ id: user.id, nome: name.trim(), papel: 'admin' });
+          if (upErr) {
+            // fallback para tabela profiles antiga se usuarios_perfil nao existir ainda
+            const baseRow = { id: user.id, name: name.trim(), full_name: name.trim(), email: user.email ?? email, active: true, is_active: true };
+            await supabase.from('profiles').insert({ ...baseRow, role: 'admin' });
+          }
+        } catch (e) { /* ignore: trigger should have handled it */ }
+      }
+      onAuth(await getProfile(user.id));
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : '';
+      setError(
+        msg === 'profile_inactive'
+          ? 'Este usuário está desativado. Fale com um administrador.'
+          : mode === 'bootstrap'
+            ? 'Não foi possível criar o administrador inicial. Verifique se já existe um administrador.'
+            : 'Credenciais inválidas. Verifique seu e-mail e senha.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <main className="auth-shell"><div className="auth-glow" /><section className="auth-panel"><div className="auth-logo"><Logo /></div><div className="auth-card"><div className="eyebrow"><LockKeyhole size={16} /> ACESSO RESTRITO</div><h1>{mode === 'login' ? 'Acesso da equipe' : 'Administrador inicial'}</h1><p className="muted">{mode === 'login' ? 'Entre para consultar o catálogo e criar propostas.' : 'Crie o primeiro acesso administrativo do seu catálogo.'}</p><form onSubmit={submit}>{mode === 'bootstrap' && <label>Nome completo<input value={name} onChange={e => setName(e.target.value)} placeholder="Seu nome" required minLength={2} /></label>}<label>E-mail<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nome@empresa.com" required /></label><label>Senha<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo de 8 caracteres" required minLength={8} /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary full" disabled={busy}>{busy ? <><span className="mini-spinner" /> Entrando...</> : mode === 'login' ? 'Entrar na operação' : 'Criar administrador'}</button></form><div className="auth-footer"><span>{mode === 'login' ? 'Primeiro acesso?' : 'Já possui acesso?'}</span><button className="text-button" onClick={() => { setMode(mode === 'login' ? 'bootstrap' : 'login'); setError(''); }}>{mode === 'login' ? 'Configurar administrador' : 'Voltar para login'}</button></div></div><p className="auth-note">Cada funcionário possui um usuário próprio. O acesso é individual e protegido.</p></section></main>;
+}
+
+function AppShell({ profile, onLogout, children }: { profile: Profile; onLogout: () => void; children: ReactNode }) {
+  const location = useLocation(); const [mobile, setMobile] = useState(false);
+  const nav = profile.role === 'admin' ? [{ to: '/vitrine', label: 'Vitrine do catálogo', icon: Building2 }, { to: '/admin', label: 'Visão geral', icon: LayoutDashboard }, { to: '/admin/maquinas', label: 'Máquinas', icon: Package }, { to: '/comparar', label: 'Comparar', icon: Grid2X2 }, { to: '/admin/marcas', label: 'Marcas', icon: Tags }, { to: '/admin/categorias', label: 'Categorias', icon: SlidersHorizontal }, { to: '/admin/usuarios', label: 'Equipe', icon: Users }] : [{ to: '/vitrine', label: 'Vitrine do catálogo', icon: Building2 }, { to: '/catalogo', label: 'Catálogo', icon: Package }, { to: '/comparar', label: 'Comparar máquinas', icon: Grid2X2 }, { to: '/propostas', label: 'Minhas propostas', icon: FileText }];
+  return <div className="app-shell"><aside className={mobile ? 'sidebar open' : 'sidebar'}><div className="sidebar-top"><Logo /><button className="mobile-close" onClick={() => setMobile(false)}><X size={20} /></button></div><div className="sidebar-section"><small>NAVEGAÇÃO</small>{nav.map(item => { const Icon = item.icon; const active = location.pathname === item.to || (item.to !== '/admin' && location.pathname.startsWith(item.to)); return <Link key={item.to} to={item.to} className={active ? 'side-link active' : 'side-link'} onClick={() => setMobile(false)}><Icon size={17} />{item.label}<ChevronRight className="side-arrow" size={14} /></Link> })}</div><div className="sidebar-bottom"><Link className="user-mini" to="/perfil" onClick={() => setMobile(false)}><div className="avatar">{profile.full_name.slice(0, 1).toUpperCase()}</div><div><strong>{profile.full_name}</strong><span>{profile.role === 'admin' ? 'Administrador' : 'Vendedor'}</span></div></Link><button className="logout-link" onClick={onLogout}><LogOut size={16} />Sair da conta</button></div></aside><div className="main-frame"><header className="topbar"><button className="mobile-menu" onClick={() => setMobile(true)}><Menu size={20} /></button><div><span className="topbar-kicker">{profile.role === 'admin' ? 'PAINEL ADMINISTRATIVO' : 'OPERAÇÃO COMERCIAL'}</span><strong>{location.pathname.startsWith('/comparar') ? 'Comparar máquinas' : location.pathname.startsWith('/propostas') ? 'Propostas comerciais' : 'Eixo-Catálogo'}</strong></div><div className="topbar-actions"><button className="icon-button"><Bell size={18} /></button><div className="top-avatar">{profile.full_name.slice(0, 1).toUpperCase()}</div></div></header><main className="page-content">{children}</main></div></div>;
+}
+
+function PageHeader({ kicker, title, description, action }: { kicker?: string; title: string; description?: string; action?: ReactNode }) { return <div className="page-header"><div><span className="eyebrow gold">{kicker || 'EIXO-CATÁLOGO'}</span><h1>{title}</h1>{description && <p className="muted">{description}</p>}</div>{action}</div>; }
+function StatCard({ label, value, detail, icon: Icon, accent = false }: { label: string; value: string | number; detail?: string; icon: typeof Package; accent?: boolean }) { return <div className={accent ? 'stat-card accent' : 'stat-card'}><div className="stat-icon"><Icon size={19} /></div><span>{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</div>; }
+function MachineCard({ machine, onClick, admin = false }: { machine: Machine; onClick: () => void; admin?: boolean }) { return <article className="machine-card"><button className="machine-visual" onClick={onClick}>{machine.image ? <img src={machine.image} alt={machine.display_name} /> : <div className="image-placeholder"><ImageIcon size={26} /><span>FOTO NÃO CADASTRADA</span></div>}<span className={`status-dot ${machine.status}`}>{machine.status === 'available' ? 'DISPONÍVEL' : machine.status === 'negotiating' ? 'EM NEGOCIAÇÃO' : machine.status.toUpperCase()}</span></button><div className="machine-body"><div className="machine-meta"><span>{machine.brand}</span><small>{machine.category}</small></div><h3>{machine.display_name}</h3><div className="price-row"><div><small>VALOR DO BEM</small><strong>{money(machine.value)}</strong></div><div><small>PARCELA A PARTIR DE</small><b>{money(machine.installment)}</b></div></div><div className="machine-tags"><span><Zap size={12} />{machine.power}</span><span><Database size={12} />{machine.hours}</span><span><Building2 size={12} />{machine.location.split(',')[0]}</span></div><button className="button button-outline full" onClick={onClick}>{admin ? 'Editar ficha' : 'Ver ficha completa'} <ChevronRight size={15} /></button></div></article>; }
+
+function Catalog({ machines }: { machines: Machine[] }) { const navigate = useNavigate(); const [query, setQuery] = useState(''); const [category, setCategory] = useState('Todas'); const [brand, setBrand] = useState('Todas'); const categories = [...new Set(machines.map(m => m.category))]; const brands = [...new Set(machines.map(m => m.brand))]; const filtered = machines.filter(m => { const match = `${m.brand} ${m.model} ${m.category} ${m.display_name}`.toLowerCase().includes(query.toLowerCase()); return match && (category === 'Todas' || m.category === category) && (brand === 'Todas' || m.brand === brand); }); const grouped = category === 'Todas' && brand === 'Todas' && !query && categories.length > 1; return <><PageHeader kicker="CATÁLOGO COMERCIAL" title="Máquinas prontas para sua próxima oferta" description="Encontre informações, condições e especificações em poucos segundos." action={<Link to="/comparar" className="button button-dark"><Grid2X2 size={16} /> Comparar máquinas</Link>} /><div className="catalog-toolbar"><div className="search-box"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar por marca, modelo, categoria ou código..." /></div><div className="filter-row"><div className="filter-label"><SlidersHorizontal size={15} /> Filtros rápidos</div><button className={category === 'Todas' ? 'chip selected' : 'chip'} onClick={() => setCategory('Todas')}>Todas as categorias</button>{categories.map(item => <button className={category === item ? 'chip selected' : 'chip'} key={item} onClick={() => setCategory(item)}>{item}</button>)}<select value={brand} onChange={e => setBrand(e.target.value)}><option>Todas</option>{brands.map(item => <option key={item}>{item}</option>)}</select></div></div><div className="result-line"><span><strong>{filtered.length}</strong> máquinas encontradas</span>{(query || category !== 'Todas' || brand !== 'Todas') && <button className="text-button" onClick={() => { setQuery(''); setCategory('Todas'); setBrand('Todas'); }}>Limpar filtros</button>}</div>{filtered.length === 0 ? <div className="empty-state"><Package size={34} /><h3>Nenhuma máquina encontrada</h3><p>Ajuste sua busca ou limpe os filtros para ver todo o catálogo.</p></div> : grouped ? <div>{categories.map(cat => <section className="catalog-group" key={cat}><div className="group-heading"><h2>{cat}</h2><span>{filtered.filter(m => m.category === cat).length} opções</span></div><div className="machine-grid">{filtered.filter(m => m.category === cat).map(m => <MachineCard key={m.id} machine={m} onClick={() => navigate(`/maquina/${m.id}`)} />)}</div></section>)}</div> : <div className="machine-grid">{filtered.map(m => <MachineCard key={m.id} machine={m} onClick={() => navigate(`/maquina/${m.id}`)} />)}</div>}</>; }
+
+function MachineDetail({ machines }: { machines: Machine[] }) {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [copied, setCopied] = useState(false);
+  const [zoom, setZoom] = useState(false);
+  const machine = machines.find(item => item.id === id);
+  if (!machine) return <div className="empty-state"><Package size={34} /><h3>Máquina não encontrada</h3><button className="button button-primary" onClick={() => navigate('/catalogo')}>Voltar ao catálogo</button></div>;
+
+  const validPhotos = machine.photos.filter(p => !!p.public_url);
+  const [activeIndex, setActiveIndex] = useState<number>(0);
+  useEffect(() => { setActiveIndex(0); }, [machine.id]);
+  const currentImgUrl: string | undefined = validPhotos[activeIndex]?.public_url ?? machine.image;
+
+  const offer = `🚜 *${machine.category} ${machine.display_name}*\n💰 *Valor:* ${money(machine.value)}\n✅ *Entrada:* ${money(machine.entry)}\n📅 *Parcelas:* a partir de: ${money(machine.installment)}`;
+  const copy = async () => { await navigator.clipboard?.writeText(offer); setCopied(true); setTimeout(() => setCopied(false), 1800); };
+  return <>
+    <button className="back-link" onClick={() => navigate(-1)}>← Voltar para catálogo</button>
+    <div className="detail-layout">
+      <div>
+        <div className="detail-gallery">
+          <button className="detail-main-image" onClick={() => currentImgUrl && setZoom(true)}>
+            {currentImgUrl
+              ? <img src={currentImgUrl} alt={machine.display_name} />
+              : <div className="image-placeholder large"><ImageIcon size={42} /><span>FOTO NÃO CADASTRADA</span></div>}
+          </button>
+          <div className="thumb-row">
+            {validPhotos.length === 0 && (
+              <div className="thumb active">
+                {machine.image ? <img src={machine.image} alt="Miniatura" /> : <ImageIcon size={16} />}
+              </div>
+            )}
+            {validPhotos.map((p, i) => (
+              <button
+                type="button"
+                key={`${p.storage_path || ''}-${p.public_url || ''}-${i}`}
+                className={i === activeIndex ? 'thumb active' : 'thumb'}
+                onClick={() => setActiveIndex(i)}
+                title={`Foto ${i + 1}${isPrincipalPhoto(p) ? ' · Principal' : ''}`}
+              >
+                {p.public_url ? <img src={p.public_url} alt={`Miniatura ${i + 1}`} /> : <ImageIcon size={16} />}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="detail-copy">
+          <span className="eyebrow gold">FICHA TÉCNICA E COMERCIAL</span>
+          <div className="detail-title">
+            <div>
+              <h1>{machine.display_name}</h1>
+              <p>{machine.brand} · {machine.category} · {machine.year}</p>
+            </div>
+            <span className="badge"><Check size={13} /> Nova de fábrica</span>
+          </div>
+          <p className="long-copy">{machine.description || 'Equipamento selecionado para operações de alta produtividade, com excelente desempenho, robustez e suporte especializado.'}</p>
+          <div className="quick-stats">
+            <div><span>Potência</span><strong>{machine.power}</strong></div>
+            <div><span>Peso operacional</span><strong>{machine.weight}</strong></div>
+            <div><span>Horímetro</span><strong>{machine.hours}</strong></div>
+            <div><span>Localização</span><strong>{machine.location}</strong></div>
+          </div>
+          <section className="detail-section">
+            <h2>Especificações técnicas</h2>
+            <div className="spec-grid">
+              {Object.entries(machine.specs).map(([key, value]) => (
+                <div className="spec-item" key={key}>
+                  <span>{key}</span>
+                  <strong>{value}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className="detail-section">
+            <h2>Principais aplicações</h2>
+            <div className="tag-list">
+              {machine.applications.map(item => <span key={item}>{item}</span>)}
+            </div>
+          </section>
+        </div>
+      </div>
+      <aside className="offer-card">
+        <div className="offer-top">
+          <span className="eyebrow gold">CONDIÇÃO COMERCIAL</span>
+          <span className="offer-status">Disponível</span>
+        </div>
+        <h2>Uma oferta pronta para compartilhar</h2>
+        <div className="offer-price">
+          <small>VALOR TOTAL</small>
+          <strong>{money(machine.value)}</strong>
+        </div>
+        <div className="offer-line"><span>Entrada</span><b>{money(machine.entry)}</b></div>
+        <div className="offer-line"><span>Parcela a partir de</span><b>{money(machine.installment)}</b></div>
+        <button className={copied ? 'button button-success full' : 'button button-primary full'} onClick={copy}>
+          {copied ? <><Check size={16} /> Oferta copiada</> : <><Clipboard size={16} /> Copiar oferta para WhatsApp</>}
+        </button>
+        <p className="offer-footnote">Os valores refletem as condições cadastradas pela administração.</p>
+      </aside>
+    </div>
+    {zoom && currentImgUrl && (
+      <div className="modal-backdrop" onClick={() => setZoom(false)}>
+        <div className="zoom-modal" onClick={e => e.stopPropagation()}>
+          <button className="modal-close" onClick={() => setZoom(false)}><X /></button>
+          <img src={currentImgUrl} alt={machine.display_name} />
+        </div>
+      </div>
+    )}
+  </>;
+}
+
+function Compare({ machines }: { machines: Machine[] }) { const [query, setQuery] = useState(''); const [selected, setSelected] = useState<string[]>(['m1', 'm2']); const choices = machines.filter(m => `${m.brand} ${m.model} ${m.category}`.toLowerCase().includes(query.toLowerCase())); const current = selected.map(id => machines.find(m => m.id === id)).filter(Boolean) as Machine[]; const toggle = (id: string) => setSelected(prev => prev.includes(id) ? prev.filter(item => item !== id) : prev.length < 3 ? [...prev, id] : prev); const allSpecs = [...new Set(current.flatMap(m => Object.keys(m.specs)))].sort(); return <><PageHeader kicker="DECISÃO COMERCIAL" title="Comparar máquinas" description="Coloque até três opções lado a lado e encontre a melhor oferta para cada cliente." action={<button className="button button-outline" onClick={() => setSelected([])}><X size={16} /> Limpar seleção</button>} /><div className="compare-picker"><div className="result-line"><strong>{selected.length} de 3 selecionadas</strong><span>Escolha as fichas que deseja comparar</span></div><div className="search-box"><Search size={17} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar marca, modelo ou categoria..." /></div><div className="choice-list">{choices.map(m => <button key={m.id} className={selected.includes(m.id) ? 'choice selected' : 'choice'} onClick={() => toggle(m.id)} disabled={!selected.includes(m.id) && selected.length >= 3}><span>{m.image ? <img src={m.image} alt="" /> : <Package size={18} />}</span><div><strong>{m.display_name}</strong><small>{m.category}</small></div>{selected.includes(m.id) && <Check size={16} />}</button>)}</div></div>{current.length < 2 ? <div className="empty-state"><Grid2X2 size={34} /><h3>Selecione pelo menos duas máquinas</h3><p>A comparação aparecerá automaticamente aqui.</p></div> : <div className="comparison-grid">{current.map(m => <article className="comparison-card" key={m.id}><div className="compare-image">{m.image ? <img src={m.image} alt={m.display_name} /> : <ImageIcon size={30} />}</div><span className="eyebrow gold">{m.brand}</span><h2>{m.display_name}</h2><small>{m.category} · {m.year}</small><div className="compare-prices"><div><span>VALOR</span><strong>{money(m.value)}</strong></div><div><span>ENTRADA</span><b>{money(m.entry)}</b></div><div><span>PARCELA</span><b>{money(m.installment)}</b></div></div><div className="compare-specs">{allSpecs.map(spec => <div key={spec}><span>{spec}</span><strong className={m.specs[spec] ? '' : 'pending'}>{m.specs[spec] || 'Em validação'}</strong></div>)}</div><Link className="button button-outline full" to={`/maquina/${m.id}`}>Ver detalhes <ChevronRight size={15} /></Link></article>)}</div>}</>; }
+
+function AdminDashboard({ machines }: { machines: Machine[] }) { const navigate = useNavigate(); const pending = machines.reduce((sum, m) => sum + Object.values(m.specs).filter(Boolean).length < 6 ? 1 : 0, 0); const categories = [...new Set(machines.map(m => m.category))]; const brands = [...new Set(machines.map(m => m.brand))]; return <><PageHeader kicker="VISÃO GERAL" title="Bom dia, sua operação está em movimento" description="Acompanhe a saúde do catálogo e os pontos que precisam da sua atenção." action={<button className="button button-primary" onClick={() => navigate('/admin/maquinas/nova')}><Plus size={17} /> Nova máquina</button>} /><div className="stat-grid"><StatCard label="Total de máquinas" value={machines.length} detail="+12% este mês" icon={Package} accent /><StatCard label="Marcas cadastradas" value={brands.length} icon={Tags} /><StatCard label="Categorias usadas" value={categories.length} icon={Grid2X2} /><StatCard label="Fichas completas" value={Math.max(0, machines.length - pending)} detail="de 100% preenchidas" icon={Check} /><StatCard label="Total de fotos" value={machines.filter(m => m.image).length} icon={ImageIcon} /><StatCard label="Sem foto" value={machines.filter(m => !m.image).length} icon={ImageIcon} /></div><div className="dashboard-grid"><section className="panel"><div className="panel-heading"><div><span className="eyebrow gold">ATENÇÃO NECESSÁRIA</span><h2>Qualidade do catálogo</h2></div><span className="pending-number">{pending} pendências</span></div><div className="quality-row"><div className="quality-ring"><strong>{Math.round(((machines.length - pending) / Math.max(machines.length, 1)) * 100)}%</strong><span>completo</span></div><div><h3>Fichas prontas para venda</h3><p className="muted">Revise os campos técnicos para garantir ofertas mais confiáveis.</p><button className="text-button" onClick={() => navigate('/admin/auditoria')}>Abrir auditoria técnica <ChevronRight size={14} /></button></div></div></section><section className="panel"><div className="panel-heading"><div><span className="eyebrow gold">DISTRIBUIÇÃO</span><h2>Máquinas por categoria</h2></div><BarChart3 size={19} /></div>{categories.map(cat => { const count = machines.filter(m => m.category === cat).length; return <button className="bar-row" key={cat} onClick={() => navigate('/admin/maquinas')}><div><span>{cat}</span><b>{count}</b></div><i><em style={{ width: `${(count / machines.length) * 100}%` }} /></i></button> })}</section></div><section className="panel recent-panel"><div className="panel-heading"><div><span className="eyebrow gold">ATIVIDADE</span><h2>Últimos cadastros</h2></div><Link className="text-button" to="/admin/maquinas">Ver todas</Link></div><div className="recent-list">{machines.slice(0, 5).map(m => <button key={m.id} className="recent-item" onClick={() => navigate(`/admin/maquinas/${m.id}`)}><div className="recent-thumb">{m.image ? <img src={m.image} alt="" /> : <Package size={17} />}</div><div><strong>{m.display_name}</strong><small>{m.brand} · {m.category}</small></div><span>{money(m.value)}</span><ChevronRight size={16} /></button>)}</div></section></>; }
+
+function AdminMachines({ machines, setMachines }: { machines: Machine[]; setMachines: (m: Machine[]) => void }) { const navigate = useNavigate(); const [query, setQuery] = useState(''); const filtered = machines.filter(m => `${m.brand} ${m.model} ${m.category}`.toLowerCase().includes(query.toLowerCase())); const remove = (id: string) => { if (window.confirm('Excluir máquina? Ela será removida do catálogo. Esta ação não pode ser desfeita.')) setMachines(machines.filter(m => m.id !== id)); }; return <><PageHeader kicker="GESTÃO DO CATÁLOGO" title="Máquinas" description="Cadastre, revise e mantenha as condições comerciais sempre atualizadas." action={<button className="button button-primary" onClick={() => navigate('/admin/maquinas/nova')}><Plus size={17} /> Nova máquina</button>} /><div className="list-toolbar"><div className="search-box"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar por marca, modelo ou categoria..." /></div><span>{filtered.length} registros</span></div><div className="table-panel"><div className="data-table head"><span>Máquina</span><span>Categoria</span><span>Status</span><span>Valor</span><span>Atualizado</span><span /></div>{filtered.map(m => <div className="data-table" key={m.id}><div className="table-machine"><div className="table-thumb">{m.image ? <img src={m.image} alt="" /> : <Package size={16} />}</div><div><strong>{m.display_name}</strong><small>{m.brand} · {m.model}</small></div></div><span>{m.category}</span><span><i className={`table-status ${m.status}`} />{m.status === 'available' ? 'Disponível' : 'Em negociação'}</span><strong>{money(m.value)}</strong><span>{date(new Date())}</span><div className="row-actions"><button onClick={() => navigate(`/maquina/${m.id}`)} title="Ver"><ChevronRight size={16} /></button><button onClick={() => navigate(`/admin/maquinas/${m.id}`)} title="Editar"><Settings size={16} /></button><button onClick={() => remove(m.id)} title="Excluir"><Trash2 size={16} /></button></div></div>)}</div></>; }
+
+function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachines: (m: Machine[]) => void }) {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const existing = machines.find(m => m.id === id);
+
+  const [categoriesList, setCategoriesList] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    (async () => {
+      const r = await supabase.from('categories').select('id,name').eq('is_visible', true).order('name');
+      if (r.data) setCategoriesList(r.data as Array<{ id: string; name: string }>);
+    })();
+  }, []);
+
+  const defaultCat = categoriesList[0]?.name || 'ESCAVADEIRA';
+  const [form, setForm] = useState<Machine>(
+    existing
+      ? { ...existing, description: existing.description ?? '', notes: existing.notes ?? '' }
+      : {
+          id: `m${Date.now()}`, internal_code: '', brand: '', model: '', display_name: '',
+          category: defaultCat, value: 0, entry: 0, installment: 0,
+          year: new Date().getFullYear(), status: 'available', power: '', weight: '', hours: '',
+          location: '', description: '', notes: '', applications: [], specs: {}, photos: [],
+        }
+  );
+  const [saved, setSaved] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [currentPhotos, setCurrentPhotos] = useState<PendingPhoto[]>([]);
+
+  const loadExistingPhotos = async (machineId: string) => {
+    const accum: PendingPhoto[] = [];
+    try {
+      const pr = await supabase
+        .from('machine_photos')
+        .select('id,machine_id,storage_path,public_url,is_primary,photo_type')
+        .eq('machine_id', machineId);
+      if (pr.data && pr.data.length > 0) {
+      for (const p of pr.data as Array<PendingPhoto>) {
+        accum.push({
+          tempId: `mp-${p.id || Math.random()}`,
+          preview: p.public_url ?? '',
+          id: p.id,
+          machine_id: p.machine_id,
+          storage_path: p.storage_path,
+          source: 'machine_photos',
+          is_primary: p.is_primary,
+          photo_type: p.photo_type,
+          public_url: p.public_url,
+        });
+      }
+    }
+    } catch (err) {
+      console.warn('machine_photos load falhou', err);
+    }
+    if (accum.length === 0) {
+      try {
+        const ir = await supabase
+          .from('machine_images')
+          .select('id,machine_id,storage_path,public_url,photo_type')
+          .eq('machine_id', machineId);
+        if (ir.data && ir.data.length > 0) {
+          for (const p of ir.data as Array<PendingPhoto & { photo_type?: string }>) {
+            accum.push({
+              tempId: `mi-${p.id || Math.random()}`,
+              preview: p.public_url ?? '',
+              id: p.id,
+              machine_id: p.machine_id,
+              storage_path: p.storage_path,
+              source: 'machine_images',
+              photo_type: p.photo_type,
+              public_url: p.public_url,
+              is_primary: typeof p.photo_type === 'string' && p.photo_type.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') === 'principal',
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('machine_images load falhou', err);
+      }
+    }
+    setCurrentPhotos(accum);
+  };
+
+  useEffect(() => { if (existing?.id) loadExistingPhotos(existing.id); }, [existing?.id]);
+
+  type UploadOutcome = { status: 'ok'; photo: PendingPhoto } | { status: 'storage_only'; photo: PendingPhoto; warning: string } | { status: 'error'; message: string };
+
+  const COLS_UNIVERSAIS_FOTO = ['machine_id','storage_path','public_url','photo_type'] as const;
+  type UniversalPhoto = { machine_id: string; storage_path: string; public_url: string | null; photo_type: string };
+
+  const tryInsert = async (table: 'machine_photos' | 'machine_images', payload: Record<string, unknown>): Promise<{ id?: string; error: string | null }> => {
+    try {
+      const { data, error } = await supabase.from(table).insert(payload).select('id').maybeSingle();
+      if (error) return { error: error.message || String(error) };
+      const id = data && (data as Record<string, unknown>).id ? (data as Record<string, unknown>).id as string : undefined;
+      return { id, error: null };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) };
+    }
+  };
+
+  const uploadSingle = async (machineId: string, file: File): Promise<UploadOutcome> => {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return { status: 'error', message: 'Formato não suportado. Use JPG, PNG ou WebP.' };
+    if (file.size > 10 * 1024 * 1024) return { status: 'error', message: 'Um arquivo excede 10 MB.' };
+    const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]+/g, '-');
+    const path = `${machineId}/${crypto.randomUUID()}-${safeName}`;
+    const { error: uploadError } = await supabase.storage
+      .from('machine-photos')
+      .upload(path, file, { contentType: file.type, upsert: false });
+    if (uploadError) return { status: 'error', message: `Erro no Storage: ${uploadError.message || uploadError.toString()}` };
+    let publicUrl: string | null = null;
+    try {
+      const { data: pub } = supabase.storage.from('machine-photos').getPublicUrl(path);
+      if (pub?.publicUrl) publicUrl = pub.publicUrl;
+    } catch { /* ignore */ }
+    const basePhoto: PendingPhoto = {
+      tempId: `new-${Date.now()}-${Math.random()}`,
+      preview: publicUrl || URL.createObjectURL(file),
+      public_url: publicUrl ?? undefined,
+      machine_id: machineId,
+      storage_path: path,
+      photo_type: 'other',
+      is_primary: false,
+    };
+    // payload PADRÃO = TODAS as colunas NOT NULL (id, machine_id, storage_path, photo_type, is_primary, created_at)
+    // usando sempre valores explícitos para NÃO DEPENDER de DEFAULT da tabela
+    const completePayload = {
+      machine_id: machineId,
+      storage_path: path,
+      public_url: publicUrl,
+      photo_type: 'other',
+      is_primary: false,
+      created_at: new Date().toISOString(),
+    } as Record<string, unknown>;
+    const universalNoCreatedNoIsPrimary = {
+      machine_id: machineId,
+      storage_path: path,
+      public_url: publicUrl,
+      photo_type: 'other',
+    };
+    const errors: Array<{ table: string; msg: string }> = [];
+    let source: 'machine_photos' | 'machine_images' | undefined;
+    let insertedId: string | undefined;
+    // ------------------------------------------------------------------
+    // TENTATIVA 1: machine_photos com payload COMPLETO
+    //   (id omitido — se a tabela tiver DEFAULT gen_random_uuid() no id, funciona;
+    //    caso contrário vai cair no erro e na próxima tentativa enviamos id explícito)
+    // ------------------------------------------------------------------
+    const mpFullR = await tryInsert('machine_photos', completePayload);
+    if (!mpFullR.error && mpFullR.id) { source = 'machine_photos'; insertedId = mpFullR.id; }
+    else {
+      if (mpFullR.error) { errors.push({ table: 'machine_photos(payload completo)', msg: mpFullR.error }); console.warn('[upload] mpFull:', mpFullR.error); }
+      // ------------------------------------------------------------------
+      // TENTATIVA 2: machine_photos com ID EXPLÍCITO (UUID gerado no client)
+      //   se o erro da tentativa 1 foi "null value in column \"id\" violates not-null"
+      //   ou se a tabela não tem default gen_random_uuid() no id
+      // ------------------------------------------------------------------
+      try {
+        const explicitIdPayload = { ...completePayload, id: crypto.randomUUID() } as Record<string, unknown>;
+        const mpExplicitId = await tryInsert('machine_photos', explicitIdPayload);
+        if (!mpExplicitId.error && mpExplicitId.id) { source = 'machine_photos'; insertedId = mpExplicitId.id; }
+        else if (mpExplicitId.error) { errors.push({ table: 'machine_photos(id explícito)', msg: mpExplicitId.error }); console.warn('[upload] mpExplicitId:', mpExplicitId.error); }
+      } catch (e) { errors.push({ table: 'machine_photos(id explícito/catch)', msg: e instanceof Error ? e.message : String(e) }); }
+      // ------------------------------------------------------------------
+      // TENTATIVA 3: machine_images com payload UNIVERSAL (só colunas que existem SEMPRE)
+      //   id omitido — a sua tabela machine_images já tem DEFAULT gen_random_uuid()
+      //   porque as fotos antigas do invest-catalog funcionam
+      // ------------------------------------------------------------------
+      if (!source) {
+        const miShort = await tryInsert('machine_images', universalNoCreatedNoIsPrimary as unknown as Record<string, unknown>);
+        if (!miShort.error && miShort.id) { source = 'machine_images'; insertedId = miShort.id; }
+        else if (miShort.error) { errors.push({ table: 'machine_images(4 colunas)', msg: miShort.error }); console.warn('[upload] miShort:', miShort.error); }
+        // ------------------------------------------------------------------
+        // TENTATIVA 4: machine_images com ID EXPLÍCITO (fallback final)
+        // ------------------------------------------------------------------
+        if (!source) {
+          try {
+            const miExplicit = {
+              ...universalNoCreatedNoIsPrimary, id: crypto.randomUUID(),
+            } as unknown as Record<string, unknown>;
+            const miE = await tryInsert('machine_images', miExplicit);
+            if (!miE.error && miE.id) { source = 'machine_images'; insertedId = miE.id; }
+            else if (miE.error) { errors.push({ table: 'machine_images(id explícito)', msg: miE.error }); console.warn('[upload] miExplicit:', miE.error); }
+          } catch (e) { errors.push({ table: 'machine_images(id explicit/catch)', msg: e instanceof Error ? e.message : String(e) }); }
+        }
+      }
+    }
+    const photo: PendingPhoto = { ...basePhoto, id: insertedId, source };
+    if (!source) {
+      const warning = errors.map(e => `• [${e.table}] ${e.msg}`).join('\n');
+      return { status: 'storage_only', photo, warning };
+    }
+    return { status: 'ok', photo };
+  };
+
+  const onFilesSelected = async (files: FileList | null) => {
+    if (!files) return;
+    setUploadMessage('');
+    const incoming: PendingPhoto[] = [];
+    for (const f of Array.from(files)) {
+      incoming.push({
+        tempId: `p-${Date.now()}-${Math.random()}`,
+        preview: URL.createObjectURL(f),
+        file: f,
+      });
+    }
+    const hasInvalid = incoming.some(p => p.file && !['image/jpeg','image/png','image/webp'].includes(p.file!.type));
+    if (hasInvalid) { setUploadMessage('❌ Formato não suportado. Use JPG, PNG ou WebP.'); return; }
+    const tooBig = incoming.find(p => p.file && p.file!.size > 10 * 1024 * 1024);
+    if (tooBig) { setUploadMessage('❌ Um arquivo excede 10 MB.'); return; }
+    setCurrentPhotos(prev => [...prev, ...incoming]);
+    if (existing) {
+      setUploading(true);
+      try {
+        const uploads: Array<Promise<UploadOutcome>> = [];
+        for (const p of incoming) {
+          if (!p.file) continue;
+          uploads.push(uploadSingle(existing.id, p.file));
+        }
+        const results = await Promise.all(uploads);
+        let storageOnlyCount = 0;
+        let okCount = 0;
+        let errorMsgs: string[] = [];
+        const warningsAgg: string[] = [];
+        const mergedResults = new Map<string, UploadOutcome>();
+        incoming.forEach((p, i) => { if (results[i]) mergedResults.set(p.tempId, results[i]); });
+        for (let i = 0; i < incoming.length; i++) {
+          const out = results[i]; if (!out) continue;
+          if (out.status === 'ok') okCount++;
+          else if (out.status === 'storage_only') { storageOnlyCount++; if (out.warning) warningsAgg.push(out.warning); }
+          else errorMsgs.push(out.message);
+        }
+        setCurrentPhotos(prev => prev.map(p => {
+          if (!p.file) return p;
+          const out = mergedResults.get(p.tempId);
+          if (out && (out.status === 'ok' || out.status === 'storage_only')) {
+            if (p.preview.startsWith('blob:')) URL.revokeObjectURL(p.preview);
+            return out.photo;
+          }
+          return p;
+        }));
+        const totalGravadas = okCount + storageOnlyCount;
+        if (okCount === incoming.length && okCount > 0) {
+          setUploadMessage(`✅ ${okCount} foto${okCount===1?'':'s'} enviada${okCount===1?'':'s'} com sucesso!`);
+        } else if (totalGravadas > 0 || warningsAgg.length > 0) {
+          const uniqueLines = Array.from(new Set(
+            warningsAgg.join('\n').split('\n').filter(Boolean)
+          ));
+          const bullet = uniqueLines.length > 0 ? `\n\n🛠  Erros específicos (por tabela):\n${uniqueLines.slice(0, 8).join('\n')}${uniqueLines.length > 8 ? `\n...(+${uniqueLines.length - 8} mais, ver F12 > Console)` : ''}\n` : '';
+          const fixo = storageOnlyCount === 0 ? '' : `⚠ ${storageOnlyCount} foto${storageOnlyCount===1?'':'s'} salva${storageOnlyCount===1?'':'s'} no Storage (aparece na prévia), mas NÃO gravou${storageOnlyCount===1?'':''} registro no banco.\n\n🕵  Como corrigir (30 segundos): No SQL Editor rode:\n\n    ALTER TABLE public.machine_images ENABLE ROW LEVEL SECURITY;\n    DROP POLICY IF EXISTS images_insert ON public.machine_images;\n    CREATE POLICY images_insert ON public.machine_images FOR INSERT TO authenticated WITH CHECK (true);\n\n    CREATE TABLE IF NOT EXISTS public.machine_photos (LIKE public.machine_images INCLUDING ALL);\n    ALTER TABLE public.machine_photos ENABLE ROW LEVEL SECURITY;\n    DROP POLICY IF EXISTS photos_insert ON public.machine_photos;\n    CREATE POLICY photos_insert ON public.machine_photos FOR INSERT TO authenticated WITH CHECK (true);\n    DROP POLICY IF EXISTS photos_update ON public.machine_photos;\n    CREATE POLICY photos_update ON public.machine_photos FOR UPDATE TO authenticated USING (true) WITH CHECK (true);\n    DROP POLICY IF EXISTS photos_delete ON public.machine_photos;\n    CREATE POLICY photos_delete ON public.machine_photos FOR DELETE TO authenticated USING (true);\n`;
+          setUploadMessage(fixo + bullet);
+        } else {
+          setUploadMessage('❌ ' + (errorMsgs[0] || 'Não foi possível enviar as fotos.'));
+        }
+      } catch (cause) {
+        console.error(cause);
+        setUploadMessage('❌ Não foi possível enviar as fotos: ' + (cause instanceof Error ? cause.message : ''));
+      } finally {
+        setUploading(false);
+      }
+    } else {
+      setUploadMessage('✅ Fotos anexadas. Serão enviadas ao salvar a máquina.');
+    }
+  };
+
+  const removePhoto = async (tempId: string) => {
+    const target = currentPhotos.find(p => p.tempId === tempId);
+    if (!target) return;
+    if (target.preview.startsWith('blob:')) URL.revokeObjectURL(target.preview);
+    // Se tem storage_path (já foi enviada para storage), tenta apagar fisicamente:
+    if (target.storage_path && (target.source === 'machine_photos' || target.source === 'machine_images')) {
+      try { await supabase.storage.from('machine-photos').remove([target.storage_path]); }
+      catch (err) { console.warn('storage remove falhou', err); }
+    }
+    if (target.id && target.source) {
+      try { await supabase.from(target.source).delete().eq('id', target.id); }
+      catch (err) { console.warn('db delete falhou', err); }
+    }
+    setCurrentPhotos(prev => prev.filter(p => p.tempId !== tempId));
+  };
+
+  const setAsPrimary = async (tempId: string) => {
+    setCurrentPhotos(prev => {
+      const out: PendingPhoto[] = prev.map(p => {
+        const next = { ...p, is_primary: p.tempId === tempId };
+        if (next.photo_type && (next.source === 'machine_images' || !next.source)) next.photo_type = next.is_primary ? 'Principal' : 'Lateral';
+        return next;
+      });
+      return out;
+    });
+    const target = currentPhotos.find(p => p.tempId === tempId);
+    if (!target || !target.id || !target.source) return;
+    if (target.source === 'machine_photos') {
+      try { await supabase.from('machine_photos').update({ is_primary: true }).eq('id', target.id); await supabase.from('machine_photos').update({ is_primary: false }).neq('id', target.id).eq('machine_id', target.machine_id!); } catch (err) { console.warn(err); }
+    } else {
+      try { await supabase.from('machine_images').update({ photo_type: 'Principal' }).eq('id', target.id); await supabase.from('machine_images').update({ photo_type: 'Lateral' }).neq('id', target.id).eq('machine_id', target.machine_id!); } catch (err) { console.warn(err); }
+    }
+  };
+
+  const field = (key: keyof Machine, value: string | number) =>
+    setForm(prev => ({ ...prev, [key]: value }));
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!form.brand || !form.model) return;
+    const normalized: Machine = {
+      ...form,
+      display_name: form.display_name.trim().replace(/\s+/g, ' ') || `${form.brand} ${form.model}`,
+    };
+    const matchedCategory = categoriesList.find(c => c.name.toUpperCase() === (form.category || '').toUpperCase());
+    const payload = {
+      brand: normalized.brand.toUpperCase(),
+      model: normalized.model,
+      display_name: normalized.display_name,
+      category: (form.category || '').toUpperCase(),
+      category_id: matchedCategory?.id ?? null,
+      internal_code: normalized.internal_code ?? null,
+      code: normalized.internal_code ?? null,
+      value: Number(normalized.value || 0),
+      price: Number(normalized.value || 0),
+      down_payment: Number(normalized.entry || 0),
+      installment: Number(normalized.installment || 0),
+      manufacture_year: normalized.year ? Number(normalized.year) : null,
+      year: normalized.year ? Number(normalized.year) : null,
+      power: normalized.power || null,
+      operating_weight: normalized.weight || null,
+      hours: normalized.hours || null,
+      location: normalized.location || null,
+      status: normalized.status,
+      description: normalized.description || null,
+      notes: normalized.notes || null,
+      specs: normalized.specs,
+      applications: normalized.applications,
+    };
+    let machineIdForPhotos = existing?.id;
+    if (existing) {
+      const { error } = await supabase.from('machines').update(payload).eq('id', existing.id);
+      if (error) { console.error('update error', error); return; }
+    } else {
+      const { data: inserted, error } = await supabase
+        .from('machines')
+        .insert([payload])
+        .select('*')
+        .maybeSingle();
+      if (error || !inserted) { console.error('insert error', error); return; }
+      normalized.id = String((inserted as Record<string, unknown>).id);
+      normalized.category_id = (inserted as Record<string, unknown>).category_id as string | undefined;
+      machineIdForPhotos = normalized.id;
+      // Upload de fotos pendentes (anexadas antes do save na criação)
+      const pending = currentPhotos.filter(p => !!p.file);
+      if (pending.length > 0 && machineIdForPhotos) {
+        setUploading(true);
+        setUploadMessage('⏳ Enviando fotos anexadas...');
+        try {
+          const results = await Promise.all(pending.map(p => uploadSingle(machineIdForPhotos!, p.file!)));
+          let okCount = 0, storageOnlyCount = 0;
+          const errorMsgs: string[] = [];
+          const mergeMap = new Map<string, UploadOutcome>();
+          pending.forEach((p, i) => { if (results[i]) mergeMap.set(p.tempId, results[i]); });
+          for (const out of results) {
+            if (out.status === 'ok') okCount++;
+            else if (out.status === 'storage_only') storageOnlyCount++;
+            else errorMsgs.push(out.message);
+          }
+          setCurrentPhotos(prev => prev.map(p => {
+            if (!p.file) return p;
+            const out = mergeMap.get(p.tempId);
+            if (out && (out.status === 'ok' || out.status === 'storage_only')) {
+              if (p.preview.startsWith('blob:')) URL.revokeObjectURL(p.preview);
+              return out.photo;
+            }
+            return p;
+          }));
+          const totalOk = okCount + storageOnlyCount;
+          if (errorMsgs.length === 0) {
+            setUploadMessage(storageOnlyCount === 0
+              ? `✅ Máquina salva e ${okCount} foto${okCount===1?'':'s'} enviada${okCount===1?'':'s'}!`
+              : `⚠ ${totalOk} foto${totalOk===1?'':'s'} salva${totalOk===1?'':'s'} no Storage, mas ${storageOnlyCount} registro${storageOnlyCount===1?'':'s'} no banco falhou. Aplique a RLS Policy INSERT na(s) tabela(s) machine_photos/machine_images (instruções abaixo).`
+            );
+          } else {
+            setUploadMessage('⚠ ' + (storageOnlyCount > 0
+              ? `${totalOk} foto${totalOk===1?'s':''} salva${totalOk===1?'s':''} no Storage. ` : '') + 'Falha de banco: ' + errorMsgs[0] + ' Rode a RLS Policy INSERT (instruções abaixo).');
+          }
+        } catch (cause) {
+          console.error(cause);
+          setUploadMessage('❌ Máquina salva, mas erro no envio: ' + (cause instanceof Error ? cause.message : ''));
+        } finally {
+          setUploading(false);
+        }
+      }
+    }
+    // Atualiza a imagem principal do normalized com base em currentPhotos (após uploads)
+    setTimeout(() => {
+      const main = currentPhotos.find(p => isPrincipalPhoto({
+        is_primary: p.is_primary, is_main: false, photo_type: p.photo_type, public_url: p.public_url,
+      })) || currentPhotos[0];
+      const image = main?.preview || main?.public_url || normalized.image;
+      const existingIndex = machines.findIndex(m => m.id === normalized.id);
+      let next: Machine[];
+      if (existingIndex >= 0) {
+        next = machines.slice();
+        next[existingIndex] = { ...normalized, image };
+      } else {
+        next = [{ ...normalized, image }, ...machines];
+      }
+      setMachines(next);
+    }, 0);
+    setMachines(existing ? machines.map(m => (m.id === existing.id ? normalized : m)) : [normalized, ...machines]);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  return (
+    <>
+      <button className="back-link" onClick={() => navigate('/admin/maquinas')}>← Voltar para máquinas</button>
+      <PageHeader
+        kicker={existing ? 'EDIÇÃO DE FICHA' : 'NOVO CADASTRO'}
+        title={existing ? existing.display_name : 'Cadastrar máquina'}
+        description="Preencha as informações comerciais, técnicas e de apresentação da ficha."
+      />
+      <form className="form-layout" onSubmit={save}>
+        <div className="form-main">
+          <section className="form-card">
+            <div className="form-card-heading">
+              <div>
+                <span className="eyebrow gold">01 · BASE COMERCIAL</span>
+                <h2>Dados da máquina</h2>
+              </div>
+              <Package size={20} />
+            </div>
+            <div className="form-grid">
+              <label>Código interno
+                <input
+                  value={existing ? (existing.internal_code ?? '') : (form.internal_code ?? '')}
+                  onChange={e => setForm(p => ({ ...p, internal_code: e.target.value }))}
+                  placeholder="Ex: EQ-0024"
+                />
+              </label>
+              <label>Categoria
+                <select value={form.category} onChange={e => field('category', e.target.value)} required>
+                  {categoriesList.length === 0 && <option value="">Carregando...</option>}
+                  {categoriesList.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  {!categoriesList.find(c => c.name.toUpperCase() === (form.category || '').toUpperCase()) &&
+                    form.category && <option value={form.category}>{form.category}</option>}
+                </select>
+              </label>
+              <label>Marca *
+                <input value={form.brand} onChange={e => field('brand', e.target.value.toUpperCase())} required placeholder="Ex: Volvo" />
+              </label>
+              <label>Modelo *
+                <input value={form.model} onChange={e => field('model', e.target.value)} required placeholder="Ex: EC140" />
+              </label>
+              <label className="span-2">Nome oficial exibido
+                <input value={form.display_name} onChange={e => field('display_name', e.target.value)} placeholder="Preenchido automaticamente se vazio" />
+              </label>
+              <label>Valor do bem
+                <input type="number" value={form.value || ''} onChange={e => field('value', Number(e.target.value))} />
+              </label>
+              <label>Entrada
+                <input type="number" value={form.entry || ''} onChange={e => field('entry', Number(e.target.value))} />
+              </label>
+              <label>Parcela a partir de
+                <input type="number" value={form.installment || ''} onChange={e => field('installment', Number(e.target.value))} />
+              </label>
+              <label>Ano de fabricação
+                <input type="number" value={form.year || ''} onChange={e => field('year', Number(e.target.value))} />
+              </label>
+              <label>Potência
+                <input value={form.power} onChange={e => field('power', e.target.value)} placeholder="Ex: 145 HP" />
+              </label>
+              <label>Peso operacional
+                <input value={form.weight} onChange={e => field('weight', e.target.value)} placeholder="Ex: 22.000 kg" />
+              </label>
+              <label>Horas de uso
+                <input value={form.hours} onChange={e => field('hours', e.target.value)} placeholder="Ex: 2.840 h" />
+              </label>
+              <label>Localização
+                <input value={form.location} onChange={e => field('location', e.target.value)} placeholder="Cidade, UF" />
+              </label>
+              <label>Status
+                <select value={form.status} onChange={e => field('status', e.target.value)}>
+                  <option value="available">DISPONÍVEL</option>
+                  <option value="negotiating">EM NEGOCIAÇÃO</option>
+                  <option value="sold">VENDIDA</option>
+                  <option value="unavailable">INDISPONÍVEL</option>
+                </select>
+              </label>
+              <label className="span-2">Descrição
+                <textarea value={form.description || ''} onChange={e => field('description', e.target.value)} maxLength={2000} rows={4} placeholder="Apresente os principais diferenciais desta máquina..." />
+              </label>
+            </div>
+          </section>
+          <section className="form-card">
+            <div className="form-card-heading">
+              <div>
+                <span className="eyebrow gold">02 · VALIDAÇÃO</span>
+                <h2>Especificações técnicas</h2>
+              </div>
+              <ShieldCheck size={20} />
+            </div>
+            <div className="validation-note"><ShieldCheck size={17} /><span>Marque os dados já conferidos em uma fonte técnica oficial.</span></div>
+            <div className="spec-edit-grid">
+              {['Profundidade máxima', 'Capacidade da caçamba', 'Alcance máximo', 'Motor', 'Transmissão', 'Vazão hidráulica'].map(label => (
+                <label key={label}>
+                  {label}
+                  <input
+                    value={form.specs[label] || ''}
+                    onChange={e => setForm(prev => ({ ...prev, specs: { ...prev.specs, [label]: e.target.value } }))}
+                    placeholder="Em validação"
+                  />
+                </label>
+              ))}
+            </div>
+          </section>
+        </div>
+        <aside className="form-aside">
+          <section className="form-card save-card">
+            <span className="eyebrow gold">PUBLICAÇÃO</span>
+            <h2>Pronto para salvar?</h2>
+            <p className="muted">A ficha ficará disponível para a equipe assim que for salva.</p>
+            <button className="button button-primary full" type="submit">
+              {saved ? <><Check size={16} /> Máquina salva</> : 'Salvar máquina'}
+            </button>
+            <button type="button" className="button button-outline full" onClick={() => navigate('/admin/maquinas')}>Cancelar</button>
+          </section>
+          <section className="form-card photo-card">
+            <ImageIcon size={22} />
+            <h3>Fotos reais</h3>
+            <p className="muted">
+              {existing
+                ? 'Imagens privadas no bucket machine-photos. Clique em uma miniatura para marcá-la como principal.'
+                : 'Anexe as fotos antes de salvar — elas serão enviadas automaticamente junto com o cadastro.'}
+            </p>
+            <label className="photo-upload">
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                onChange={e => onFilesSelected(e.target.files)}
+                disabled={uploading}
+              />
+              <span className="button button-outline full">
+                {uploading ? 'Enviando fotos...' : currentPhotos.length > 0 ? 'Adicionar mais fotos' : 'Selecionar fotos'}
+              </span>
+            </label>
+            {uploadMessage && (
+              <div style={{
+                marginTop: 10,
+                padding: '10px 12px',
+                borderRadius: 10,
+                fontSize: 13,
+                lineHeight: 1.45,
+                background:
+                  uploadMessage.startsWith('❌') ? '#fef2f2' :
+                  uploadMessage.startsWith('⚠') ? '#fffbeb' :
+                  '#ecfdf5',
+                color:
+                  uploadMessage.startsWith('❌') ? '#991b1b' :
+                  uploadMessage.startsWith('⚠') ? '#92400e' :
+                  '#065f46',
+                border: '1px solid ' + (
+                  uploadMessage.startsWith('❌') ? '#fecaca' :
+                  uploadMessage.startsWith('⚠') ? '#fde68a' :
+                  '#a7f3d0'
+                ),
+              }}>{uploadMessage}</div>
+            )}
+            {currentPhotos.length > 0 && (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                  <small className="muted">{currentPhotos.length} foto{currentPhotos.length === 1 ? '' : 's'} anexada{currentPhotos.length === 1 ? '' : 's'}</small>
+                  {currentPhotos.some(p => !p.is_primary && !p.preview.includes('blob:') ? false : false) && <span />}
+                </div>
+                <div
+                  aria-label="Fotos anexadas"
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                    gap: 10,
+                    marginTop: 8,
+                  }}
+                >
+                  {currentPhotos.map(p => {
+                    const principal = isPrincipalPhoto({
+                      is_primary: p.is_primary, is_main: false, photo_type: p.photo_type,
+                      public_url: p.public_url, image_url: undefined, storage_path: p.storage_path,
+                    });
+                    return (
+                      <div
+                        key={p.tempId}
+                        style={{
+                          position: 'relative',
+                          borderRadius: 10,
+                          overflow: 'hidden',
+                          outline: principal ? '2px solid #d4a24c' : '1px solid #e6e3db',
+                          background: '#fff',
+                          aspectRatio: '1 / 1',
+                        }}
+                        title={principal ? 'Foto principal — clique para trocar' : 'Clique para definir como principal'}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setAsPrimary(p.tempId)}
+                          style={{
+                            display: 'block', width: '100%', height: '100%',
+                            padding: 0, border: 'none', background: 'transparent', cursor: 'pointer',
+                          }}
+                        >
+                          <img
+                            src={p.preview}
+                            alt="Prévia anexada"
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                          />
+                        </button>
+                        <span
+                          style={{
+                            position: 'absolute', left: 6, top: 6,
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            background: principal ? '#0f172a' : 'rgba(15, 23, 42, 0.55)',
+                            color: '#fff',
+                            fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                          }}
+                        >
+                          {principal ? 'PRINCIPAL' : 'Clique p/ principal'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removePhoto(p.tempId)}
+                          aria-label="Excluir foto"
+                          style={{
+                            position: 'absolute', top: 6, right: 6,
+                            width: 26, height: 26, borderRadius: 999,
+                            border: 'none',
+                            background: 'rgba(220, 38, 38, 0.92)',
+                            color: '#fff',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 14,
+                            lineHeight: 1,
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            <div className="photo-drop">
+              Principal · Lateral · Traseira · Cabine<br />
+              <small>JPG, PNG ou WebP · até 10 MB por arquivo</small>
+            </div>
+          </section>
+        </aside>
+      </form>
+    </>
+  );
+}
+
+function AdminSimple({ title, kicker, description, children }: { title: string; kicker: string; description: string; children?: ReactNode }) { return <><PageHeader kicker={kicker} title={title} description={description} />{children || <div className="empty-state"><Database size={34} /><h3>Em preparação</h3><p>Esta área já está protegida para administradores e pronta para receber os dados.</p></div>}</>; }
+
+type AdminUserRow = {
+  id: string;
+  full_name: string;
+  email: string;
+  role: Role;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+function AdminUsers() {
+  const [rows, setRows] = useState<AdminUserRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState<AdminUserRow | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      // 1) Tenta TABELA NOVA usuarios_perfil (id, nome, papel, criado_em)
+      let r: any = await supabase
+        .from('usuarios_perfil')
+        .select('id, nome, papel, criado_em')
+        .order('criado_em', { ascending: false });
+      let usarFallbackProfiles = !!r.error;
+      if (usarFallbackProfiles) {
+        // 2) Fallback para tabela profiles antiga
+        r = await supabase
+          .from('profiles')
+          .select('id,name,full_name,email,role,active,is_active,created_at,updated_at')
+          .order('created_at', { ascending: false });
+      }
+      if (r.error) {
+        const msg = typeof (r.error as unknown as { message?: string }).message === 'string'
+          ? (r.error as unknown as { message: string }).message
+          : String(r.error);
+        setMessage({ kind: 'err', text: `Não foi possível carregar a equipe (${msg}).` });
+        return;
+      }
+      const data = Array.isArray(r.data) ? (r.data as Array<Record<string, unknown>>) : [];
+      const mapped: AdminUserRow[] = data.map(row => {
+        if (!usarFallbackProfiles) {
+          const rawPapel = String(row.papel ?? 'vendedor').toLowerCase();
+          const roleNorm: Role = (rawPapel === 'admin' || rawPapel === 'administrador' || rawPapel === 'adm') ? 'admin' : 'seller';
+          return {
+            id: String(row.id),
+            full_name: String(row.nome ?? 'Sem nome'),
+            email: '',
+            role: roleNorm,
+            is_active: true,
+            created_at: row.criado_em ? String(row.criado_em) : undefined,
+          };
+        }
+        const rawRole = String(row.role ?? 'seller');
+        const roleNorm: Role = (rawRole.toLowerCase() === 'admin' || rawRole.toLowerCase() === 'administrador' || rawRole.toLowerCase() === 'adm') ? 'admin' : 'seller';
+        return {
+          id: String(row.id),
+          full_name: String(row.full_name ?? row.name ?? 'Sem nome'),
+          email: String(row.email ?? ''),
+          role: roleNorm,
+          is_active: Boolean(row.is_active ?? row.active ?? true),
+          created_at: row.created_at ? String(row.created_at) : undefined,
+          updated_at: row.updated_at ? String(row.updated_at) : undefined,
+        };
+      });
+      setRows(mapped);
+    } catch (e) {
+      console.error(e);
+      setMessage({ kind: 'err', text: 'Não foi possível carregar a equipe.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const filtered = rows.filter(u => `${u.full_name} ${u.email}`.toLowerCase().includes(query.toLowerCase()));
+  const adminsCount = rows.filter(u => u.role === 'admin').length;
+  const activeCount = rows.filter(u => u.is_active).length;
+
+  const remove = async (row: AdminUserRow) => {
+    if (!window.confirm(`Excluir o usuário "${row.full_name}"?\nEsta ação apaga a conta e não pode ser desfeita.`)) return;
+    setMessage(null);
+    try {
+      const r = await supabase.rpc('admin_excluir_usuario', { p_perfil_id: row.id });
+      if (r.error) throw new Error(r.error.message || String(r.error));
+      setMessage({ kind: 'ok', text: 'Usuário excluído.' });
+      await load();
+    } catch (e) {
+      console.error(e);
+      setMessage({ kind: 'err', text: 'Não foi possível excluir: ' + (e instanceof Error ? e.message : 'rode a migration 20261009180000_usuarios_perfil_auth_supabase.sql') });
+    }
+  };
+
+  return <>
+    <PageHeader
+      kicker="ACESSOS E PERMISSÕES"
+      title="Equipe de operação"
+      description="Gerencie as contas administrativas e de vendas, defina permissões, ative e desative acessos."
+      action={<button className="button button-primary" onClick={() => setShowNew(true)}><Plus size={16}/> Novo usuário</button>}
+    />
+    <div className="stat-grid" style={{ marginBottom: 22 }}>
+      <StatCard label="Total de contas" value={rows.length} icon={Users} accent />
+      <StatCard label="Administradores" value={adminsCount} icon={ShieldCheck} />
+      <StatCard label="Vendedores" value={Math.max(0, rows.length - adminsCount)} icon={Users} />
+      <StatCard label="Contas ativas" value={activeCount} icon={Check} />
+    </div>
+    <div className="panel" style={{ padding: 18 }}>
+      <div className="list-toolbar" style={{ marginBottom: 14 }}>
+        <div className="search-box">
+          <Search size={17}/>
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar por nome ou e-mail..."/>
+        </div>
+        <div className="row-actions">
+          <button className="icon-button" title="Recarregar" onClick={load}><FileText size={16}/></button>
+        </div>
+      </div>
+      {message && (
+        <div style={{
+          margin: '0 0 14px',
+          padding: '10px 12px',
+          borderRadius: 10,
+          fontSize: 13,
+          background: message.kind === 'ok' ? '#ecfdf5' : '#fef2f2',
+          color: message.kind === 'ok' ? '#065f46' : '#991b1b',
+          border: '1px solid ' + (message.kind === 'ok' ? '#a7f3d0' : '#fecaca'),
+        }}>{message.text}</div>
+      )}
+      {loading ? (
+        <div className="empty-state"><Package size={30}/><h3>Carregando...</h3></div>
+      ) : filtered.length === 0 ? (
+        <div className="empty-state"><Users size={34}/><h3>Nenhum usuário encontrado</h3><p>{query ? 'Refine a busca ou limpe os filtros.' : 'Clique em "Novo usuário" para começar.'}</p></div>
+      ) : (
+        <div className="data-table head">
+          <span>Usuário</span><span>Perfil</span><span>Status</span><span>Criado em</span><span />
+        </div>
+      )}
+      {!loading && filtered.map(u => (
+        <div className="data-table" key={u.id}>
+          <div className="table-machine">
+            <div className="table-thumb" style={{ background: 'linear-gradient(135deg,#fff4d6 0%, #f4e6b9 100%)', color: '#8b6f1d', fontWeight: 700 }}>
+              {u.full_name.slice(0, 1).toUpperCase() || '?'}
+            </div>
+            <div>
+              <strong>{u.full_name}</strong>
+              <small style={{ color: '#78716c' }}>{u.email}</small>
+            </div>
+          </div>
+          <span>
+            <span className={`chip ${u.role === 'admin' ? 'selected' : ''}`} style={{ margin: 0 }}>
+              {u.role === 'admin' ? <><ShieldCheck size={12}/> Administrador</> : <><Users size={12}/> Vendedor</>}
+            </span>
+          </span>
+          <span>
+            <i className={`table-status ${u.is_active ? 'available' : 'sold'}`} style={{ marginRight: 8 }} />
+            {u.is_active ? 'Ativo' : 'Desativado'}
+          </span>
+          <span style={{ color: '#78716c', fontSize: 13 }}>
+            {u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '-'}
+          </span>
+          <div className="row-actions">
+            <button title="Editar usuário" onClick={() => setEditing(u)}><Settings size={16}/></button>
+            <button title="Excluir usuário" onClick={() => remove(u)}><Trash2 size={16}/></button>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    {showNew && <NewUserModal onClose={() => setShowNew(false)} onDone={() => { setShowNew(false); load(); }} setMessage={setMessage}/>}
+    {editing && <EditUserModal row={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); load(); }} setMessage={setMessage}/>}
+  </>;
+}
+
+type MsgFn = (m: { kind: 'ok' | 'err'; text: string } | null) => void;
+
+function NewUserModal({ onClose, onDone, setMessage }: { onClose: () => void; onDone: () => void; setMessage: MsgFn }) {
+  const [busy, setBusy] = useState(false);
+  const [full_name, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<Role>('seller');
+  const [is_active, setActive] = useState(true);
+  const [pwd, setPwd] = useState('');
+  const [pwd2, setPwd2] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
+  const [localErr, setLocalErr] = useState('');
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setLocalErr('');
+    if (full_name.trim().length < 2) { setLocalErr('Informe o nome completo (mínimo 2 caracteres).'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setLocalErr('Informe um e-mail válido.'); return; }
+    if (pwd.length < 6) { setLocalErr('A senha temporária precisa de pelo menos 6 caracteres.'); return; }
+    if (pwd !== pwd2) { setLocalErr('As senhas não coincidem.'); return; }
+    setBusy(true);
+    setMessage(null);
+    try {
+      // === CRIA VIA SUPABASE AUTH SDK NATIVO (signUp) ===
+      // 1) cria linha auth.users, 2) dispara trigger handle_new_user -> cria usuarios_perfil automaticamente
+      const signUpRes = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password: pwd,
+        options: {
+          data: { nome: full_name.trim(), name: full_name.trim(), full_name: full_name.trim(), papel: role },
+          emailRedirectTo: location.origin,
+        },
+      });
+      if (signUpRes.error) throw new Error(signUpRes.error.message || String(signUpRes.error));
+      const userId = signUpRes.data.user?.id;
+      if (!userId) throw new Error('Conta criada mas sem id de usuário. Tente recarregar.');
+      // Garante que o papel foi gravado (garantia dupla, trigger tbem cria)
+      try {
+        await supabase.from('usuarios_perfil').update({ nome: full_name.trim(), papel: role }).eq('id', userId);
+      } catch { /* ignore, trigger handled it */ }
+      // Aplicar ativo/desativo via RPC admin_set_perfil_acesso (também da sync em profiles antiga + user_roles legada)
+      try {
+        await supabase.rpc('admin_set_perfil_acesso', { p_perfil_id: userId, p_papel: role, p_ativo: is_active });
+      } catch { /* ignore se migration ainda nao rodou: role e nome foram salvos acima */ }
+      setMessage({ kind: 'ok', text: 'Usuário criado via Supabase Auth! Envie as credenciais para o colaborador.' });
+      onDone();
+    } catch (err) {
+      console.error(err);
+      setLocalErr(err instanceof Error ? err.message : 'Erro ao criar.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <div className="modal-backdrop" onClick={onClose}>
+    <form className="zoom-modal" style={{ width: 520, maxWidth: '92vw' }} onClick={e => e.stopPropagation()} onSubmit={submit}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div><span className="eyebrow gold">NOVO ACESSO · SUPABASE AUTH</span><h2 style={{ margin: '4px 0 0' }}>Cadastrar usuário</h2></div>
+        <button type="button" className="modal-close" onClick={onClose}><X size={18}/></button>
+      </div>
+      <p className="muted" style={{ marginTop: 0 }}>Usuário criado via <b>supabase.auth.signUp</b> — a linha em <code>usuarios_perfil</code> é criada automaticamente pelo trigger do banco.</p>
+      <label>Nome completo<input value={full_name} onChange={e => setFullName(e.target.value)} required minLength={2} maxLength={120}/></label>
+      <label>E-mail<input type="email" value={email} onChange={e => setEmail(e.target.value)} required/></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <label>Perfil
+          <select value={role} onChange={e => setRole(e.target.value as Role)}>
+            <option value="seller">Vendedor</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '14px 14px', background: '#fff', border: '1px solid #e7e1cf', borderRadius: 10 }}>
+          <span style={{ display: 'block', fontSize: 13, marginBottom: 2 }}>Conta ativa</span>
+          <input type="checkbox" style={{ width: 'auto', height: 18, margin: 0 }} checked={is_active} onChange={e => setActive(e.target.checked)}/>
+        </label>
+      </div>
+      <label>Senha temporária
+        <div style={{ position: 'relative' }}>
+          <input type={showPwd ? 'text' : 'password'} value={pwd} onChange={e => setPwd(e.target.value)} minLength={6} required/>
+          <button type="button" onClick={() => setShowPwd(s => !s)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#8c8166', cursor: 'pointer' }}>{showPwd ? 'Ocultar' : 'Mostrar'}</button>
+        </div>
+      </label>
+      <label>Confirmar senha<input type={showPwd ? 'text' : 'password'} value={pwd2} onChange={e => setPwd2(e.target.value)} minLength={6} required/></label>
+      {localErr && <div className="form-error">{localErr}</div>}
+      <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+        <button type="button" className="button button-outline" onClick={onClose} disabled={busy}>Cancelar</button>
+        <button type="submit" className="button button-primary" style={{ marginLeft: 'auto' }} disabled={busy}>{busy ? 'Criando...' : 'Criar via Supabase Auth'}</button>
+      </div>
+    </form>
+  </div>;
+}
+
+function EditUserModal({ row, onClose, onDone, setMessage }: { row: AdminUserRow; onClose: () => void; onDone: () => void; setMessage: MsgFn }) {
+  const [busy, setBusy] = useState(false);
+  const [full_name, setFullName] = useState(row.full_name);
+  const [role, setRole] = useState<Role>(row.role);
+  const [is_active, setActive] = useState(row.is_active);
+  const [localErr, setLocalErr] = useState('');
+  const [resetOpen, setResetOpen] = useState(false);
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setLocalErr('');
+    if (full_name.trim().length < 2) { setLocalErr('Nome inválido.'); return; }
+    setBusy(true);
+    setMessage(null);
+    try {
+      // 1) Nome em usuarios_perfil (tabela nova)
+      let nomeOk = false;
+      try {
+        const { error } = await supabase.from('usuarios_perfil').update({ nome: full_name.trim() }).eq('id', row.id);
+        nomeOk = !error;
+      } catch { nomeOk = false; }
+      if (!nomeOk) {
+        // Fallback para profiles antiga
+        const { error: fbErr } = await supabase
+          .from('profiles')
+          .update({ full_name: full_name.trim(), name: full_name.trim(), updated_at: new Date().toISOString() })
+          .eq('id', row.id);
+        if (fbErr) throw new Error(fbErr.message || String(fbErr));
+      }
+      // 2) Role / ativo: tenta RPC admin_set_perfil_acesso (atualiza usuarios_perfil + profiles antiga + user_roles + banned auth.users)
+      try {
+        const rpcRes = await supabase.rpc('admin_set_perfil_acesso', {
+          p_perfil_id: row.id,
+          p_papel: role,
+          p_ativo: is_active,
+        });
+        if (rpcRes.error) throw new Error(rpcRes.error.message || String(rpcRes.error));
+      } catch (err) {
+        // Fallback: atualiza direto usuarios_perfil.papel se a RPC nao tiver rodado ainda
+        try {
+          const { error: fbErr } = await supabase.from('usuarios_perfil').update({ papel: role }).eq('id', row.id);
+          if (fbErr) throw fbErr;
+        } catch {
+          throw err;
+        }
+      }
+      setMessage({ kind: 'ok', text: 'Usuário atualizado.' });
+      onDone();
+    } catch (err) {
+      console.error(err);
+      setLocalErr(err instanceof Error ? err.message : 'Erro ao salvar.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <div className="modal-backdrop" onClick={onClose}>
+    <form className="zoom-modal" style={{ width: 560, maxWidth: '92vw' }} onClick={e => e.stopPropagation()} onSubmit={save}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div><span className="eyebrow gold">EDITAR ACESSO</span><h2 style={{ margin: '4px 0 0' }}>{row.full_name}</h2></div>
+        <button type="button" className="modal-close" onClick={onClose}><X size={18}/></button>
+      </div>
+      <label>E-mail<input value={row.email} disabled/></label>
+      <label>Nome completo<input value={full_name} onChange={e => setFullName(e.target.value)} required minLength={2} maxLength={120}/></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <label>Perfil
+          <select value={role} onChange={e => setRole(e.target.value as Role)}>
+            <option value="seller">Vendedor</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '14px 14px', background: '#fff', border: '1px solid #e7e1cf', borderRadius: 10 }}>
+          <span style={{ display: 'block', fontSize: 13, marginBottom: 2 }}>Conta ativa</span>
+          <input type="checkbox" style={{ width: 'auto', height: 18, margin: 0 }} checked={is_active} onChange={e => setActive(e.target.checked)}/>
+        </label>
+      </div>
+      {localErr && <div className="form-error" style={{ marginTop: 12 }}>{localErr}</div>}
+      <div style={{ marginTop: 14, padding: 12, border: '1px dashed #e5e0cf', borderRadius: 10, background: '#fefbf2' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <span className="eyebrow gold">SEGURANÇA · SUPABASE AUTH</span>
+            <h4 style={{ margin: '4px 0 0' }}>Senha</h4>
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>Envia um link oficial de redefinição de senha do Supabase Authentication para o e-mail do usuário.</p>
+          </div>
+          <button type="button" className="button button-outline" onClick={() => setResetOpen(true)}><LockKeyhole size={15}/> Resetar senha</button>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+        <button type="button" className="button button-outline" onClick={onClose} disabled={busy}>Cancelar</button>
+        <button type="submit" className="button button-primary" style={{ marginLeft: 'auto' }} disabled={busy}>{busy ? 'Salvando...' : 'Salvar alterações'}</button>
+      </div>
+    </form>
+    {resetOpen && (
+      <ResetPasswordModal
+        user={row}
+        onClose={() => setResetOpen(false)}
+        onDone={() => { setResetOpen(false); onDone(); }}
+        setMessage={setMessage}
+      />
+    )}
+  </div>;
+}
+
+function ResetPasswordModal({ user, onClose, onDone, setMessage }: { user: AdminUserRow; onClose: () => void; onDone: () => void; setMessage: MsgFn }) {
+  const [busy, setBusy] = useState(false);
+  const [localErr, setLocalErr] = useState('');
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setLocalErr('');
+    if (!user.email) { setLocalErr('Esse usuário não tem e-mail cadastrado no Supabase Auth.'); return; }
+    setBusy(true);
+    setMessage(null);
+    try {
+      // === VIA SUPABASE AUTH SDK NATIVO: resetPasswordForEmail ===
+      // Envia link de redefinição OFICIAL do Supabase Authentication (não precisa de service_role)
+      const { error } = await supabase.auth.resetPasswordForEmail(user.email, { redirectTo: location.origin });
+      if (error) throw new Error(error.message || String(error));
+      setMessage({ kind: 'ok', text: `Link de redefinição enviado para ${user.email}. O usuário receberá o e-mail oficial do Supabase Auth.` });
+      onDone();
+    } catch (err) {
+      console.error(err);
+      setLocalErr(err instanceof Error ? err.message : 'Erro.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <div className="modal-backdrop" onClick={onClose}>
+    <form className="zoom-modal" style={{ width: 480, maxWidth: '92vw' }} onClick={e => e.stopPropagation()} onSubmit={submit}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div><span className="eyebrow gold">REDEFINIR VIA SUPABASE AUTH</span><h2 style={{ margin: '4px 0 0' }}>{user.full_name}</h2><p className="muted" style={{ marginTop: 6, fontSize: 13 }}>{user.email}</p></div>
+        <button type="button" className="modal-close" onClick={onClose}><X size={18}/></button>
+      </div>
+      <p className="muted">O Supabase Authentication vai enviar um e-mail oficial para <b>{user.email}</b> com um link válido para o usuário criar uma senha nova.</p>
+      {localErr && <div className="form-error">{localErr}</div>}
+      <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+        <button type="button" className="button button-outline" onClick={onClose} disabled={busy}>Cancelar</button>
+        <button type="submit" className="button button-primary" style={{ marginLeft: 'auto' }} disabled={busy}>{busy ? 'Enviando...' : <><Send size={15}/> Enviar e-mail de reset</>}</button>
+      </div>
+    </form>
+  </div>;
+}
+function Categories() {
+  type Row = { id: string; name: string; is_visible: boolean };
+  const [items, setItems] = useState<Row[]>([]);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const r = await supabase.from('categories').select('id,name,is_visible').order('name');
+      if (r.data) setItems(r.data as Row[]);
+    })();
+  }, []);
+  const add = async () => {
+    const next = name.trim().toUpperCase();
+    if (next.length < 2 || items.some(i => i.name.toUpperCase() === next)) return;
+    setBusy(true);
+    await supabase.from('categories').insert([{ name: next, is_visible: true }]);
+    setName(''); setBusy(false);
+    const r = await supabase.from('categories').select('id,name,is_visible').order('name');
+    if (r.data) setItems(r.data as Row[]);
+  };
+  const toggle = async (row: Row) => {
+    setBusy(true);
+    await supabase.from('categories').update({ is_visible: !row.is_visible }).eq('id', row.id);
+    setBusy(false);
+    const r = await supabase.from('categories').select('id,name,is_visible').order('name');
+    if (r.data) setItems(r.data as Row[]);
+  };
+  const remove = async (row: Row) => {
+    if (!window.confirm('Excluir categoria?')) return;
+    setBusy(true);
+    await supabase.from('categories').delete().eq('id', row.id);
+    setBusy(false);
+    const r = await supabase.from('categories').select('id,name,is_visible').order('name');
+    if (r.data) setItems(r.data as Row[]);
+  };
+  return (
+    <AdminSimple title="Categorias" kicker="ORGANIZAÇÃO DO CATÁLOGO" description="Controle os filtros rápidos usados pela equipe comercial.">
+      <div className="inline-form">
+        <div className="search-box">
+          <Plus size={18} />
+          <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="Nome da nova categoria" />
+        </div>
+        <button className="button button-primary" onClick={add} disabled={busy}>{busy ? 'Salvando...' : 'Adicionar categoria'}</button>
+      </div>
+      <div className="category-list">
+        {items.map(item => (
+          <div className="category-row" key={item.id}>
+            <strong>{item.name}{!item.is_visible && <span className="muted" style={{ marginLeft: 8, fontSize: 11 }}>· oculta</span>}</strong>
+            <div>
+              <button className="button button-outline small" onClick={() => toggle(item)} disabled={busy}>{item.is_visible ? 'Ocultar' : 'Mostrar'}</button>
+              <button className="icon-danger" onClick={() => remove(item)} disabled={busy} title="Excluir"><Trash2 size={16} /></button>
+            </div>
+          </div>
+        ))}
+        {items.length === 0 && <div className="empty-state"><Database size={30} /><h3>Nenhuma categoria</h3></div>}
+      </div>
+    </AdminSimple>
+  );
+}
+function Brands({ machines }: { machines: Machine[] }) { const grouped = Object.entries(machines.reduce<Record<string, string[]>>((acc, m) => { (acc[m.brand] ||= []).push(m.model); return acc; }, {})); return <AdminSimple title="Marcas" kicker="IDENTIDADE COMERCIAL" description="Marcas identificadas automaticamente a partir das máquinas cadastradas."><div className="brand-grid">{grouped.map(([brand, models]) => <div className="brand-card" key={brand}><div className="brand-card-top"><div className="brand-symbol">{brand.slice(0, 1)}</div><strong>{models.length}</strong></div><h2>{brand}</h2><p>{models.join(' · ')}</p><button className="text-button">Ver máquinas <ChevronRight size={14} /></button></div>)}</div></AdminSimple>; }
+function Proposals() { const [brands] = useState(demoBrands); const [segments] = useState(demoSegments); const [brand, setBrand] = useState(brands[0].id); const [segment, setSegment] = useState(segments[0].id); const [client, setClient] = useState(''); const [credit, setCredit] = useState(''); const [entry, setEntry] = useState(''); const [installment, setInstallment] = useState(''); const [term, setTerm] = useState('60'); const [generated, setGenerated] = useState(false); const chosenSegment = segments.find(s => s.id === segment)!; const chosenBrand = brands.find(b => b.id === brand)!; const submit = (e: FormEvent) => { e.preventDefault(); if (!client || !credit || !installment) return; setGenerated(true); }; return <><PageHeader kicker="PROPOSTAS COMERCIAIS" title="Gerar uma proposta" description="Preencha apenas os dados do negócio. As taxas oficiais entram automaticamente." action={<Link to="/propostas/historico" className="button button-outline"><FileText size={16} /> Histórico</Link>} /><div className="proposal-layout"><form className="proposal-form" onSubmit={submit}><section className="form-card"><div className="form-card-heading"><div><span className="eyebrow gold">01 · CONFIGURAÇÃO</span><h2>Escolha a operação</h2></div><Calculator size={20} /></div><div className="form-grid"><label>Marca<select value={brand} onChange={e => setBrand(e.target.value)}>{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label><label>Segmento<select value={segment} onChange={e => setSegment(e.target.value)}>{segments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label></div><div className="locked-rates"><div className="locked-heading"><LockKeyhole size={16} /><strong>Taxas oficiais da operação</strong><span>Definido pela administração</span></div><div className="rate-grid"><div><small>Administração</small><strong>18,00%</strong></div><div><small>Fundo de reserva</small><strong>2,00%</strong></div><div><small>Seguro prestamista</small><strong>0,04%</strong></div></div></div></section><section className="form-card"><div className="form-card-heading"><div><span className="eyebrow gold">02 · DADOS VARIÁVEIS</span><h2>Informações do cliente e plano</h2></div><Users size={20} /></div><div className="form-grid"><label className="span-2">Nome do cliente<input value={client} onChange={e => setClient(e.target.value)} placeholder="Pessoa física ou jurídica" required /></label><label>Valor do bem / crédito<input type="number" value={credit} onChange={e => setCredit(e.target.value)} placeholder="R$ 0,00" required /></label><label>Valor de adesão<input type="number" value={entry} onChange={e => setEntry(e.target.value)} placeholder="R$ 0,00" /></label><label>Parcela mensal<input type="number" value={installment} onChange={e => setInstallment(e.target.value)} placeholder="R$ 0,00" required /></label><label>Prazo (meses)<input type="number" value={term} min={chosenSegment.min_term} max={chosenSegment.max_term} onChange={e => setTerm(e.target.value)} required /><small className="field-help">Permitido: {chosenSegment.min_term} a {chosenSegment.max_term} meses</small></label></div><button className="button button-primary full" type="submit"><FileText size={17} /> Gerar proposta em PDF</button></section></form><aside className="proposal-preview"><div className="preview-toolbar"><span>PRÉVIA DO DOCUMENTO</span><span className="live-dot">AO VIVO</span></div><div className="pdf-page"><div className="pdf-header"><Logo compact /><span>PARCEIRO AUTORIZADO</span></div><div className="pdf-title"><span>SIMULAÇÃO DE CRÉDITO</span><h2>Proposta de consórcio</h2><small>PROP. 0001 · {chosenSegment.name.toUpperCase()} · {date(new Date())}</small></div><div className="pdf-client"><small>PROPOSTA PREPARADA PARA</small><strong>{client || 'Nome do cliente'}</strong></div><div className="pdf-cards"><div><small>VALOR DO CRÉDITO</small><strong>{credit ? money(Number(credit)) : 'R$ 0,00'}</strong></div><div><small>ADESÃO</small><strong>{entry ? money(Number(entry)) : 'R$ 0,00'}</strong></div><div><small>PARCELA MENSAL</small><strong>{installment ? money(Number(installment)) : 'R$ 0,00'}</strong></div><div><small>PRAZO</small><strong>{term} meses</strong></div></div><h4>COMPOSIÇÃO DA TAXA ADMINISTRATIVA</h4><div className="pdf-rates"><div><span>Taxa de administração total</span><b>18,00%</b></div><div><span>Fundo de reserva</span><b>2,00%</b></div><div><span>Seguro prestamista</span><b>0,04%</b></div></div><p className="pdf-note">As taxas apresentadas são oficiais e definidas pela administração. Os valores já estão considerados na composição da parcela.</p><div className="pdf-footer"><strong>{chosenBrand.name}</strong><span>Proposta válida para análise de crédito · Consulte condições completas</span></div></div>{generated && <div className="generated-banner"><Check size={16} /> Proposta criada. O download ficará disponível no documento final.</div>}</aside></div></>; }
+
+function ProfilePage({ profile, onUpdate }: { profile: Profile; onUpdate: (profile: Profile) => void }) {
+  const [name, setName] = useState(profile.full_name);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (name.trim().length < 2) return;
+    setSaving(true); setMessage('');
+    // 1) Tenta usuarios_perfil.nome
+    let ok = false;
+    try {
+      const { error } = await supabase
+        .from('usuarios_perfil')
+        .update({ nome: name.trim() })
+        .eq('id', profile.id);
+      ok = !error;
+    } catch { ok = false; }
+    if (!ok) {
+      // 2) Fallback para profiles antiga
+      try {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ full_name: name.trim(), name: name.trim(), updated_at: new Date().toISOString() })
+          .eq('id', profile.id);
+        ok = !error;
+      } catch { ok = false; }
+    }
+    if (ok) {
+      const updated: Profile = { ...profile, full_name: name.trim() };
+      onUpdate(updated);
+      setMessage('Perfil atualizado.');
+    } else {
+      setMessage('Não foi possível atualizar o perfil.');
+    }
+    setSaving(false);
+  };
+  return <><PageHeader kicker="MINHA CONTA" title="Perfil do usuário" description="Mantenha seus dados de acesso e identificação atualizados." /><div className="profile-layout"><section className="form-card profile-card"><div className="profile-hero"><div className="profile-avatar">{profile.full_name.slice(0, 1).toUpperCase()}</div><div><span className="eyebrow gold">ACESSO INDIVIDUAL</span><h2>{profile.full_name}</h2><p className="muted">{profile.role === 'admin' ? 'Administrador' : 'Vendedor'} · conta ativa</p></div></div><form onSubmit={save}><label>Nome completo<input value={name} onChange={e => setName(e.target.value)} minLength={2} maxLength={120} required /></label><label>E-mail<input value={profile.email} disabled /></label><label>Perfil de acesso<input value={profile.role === 'admin' ? 'Administrador' : 'Vendedor'} disabled /></label>{message && <div className="form-success"><Check size={16} /> {message}</div>}<button className="button button-primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button></form></section><aside className="form-card account-security"><ShieldCheck size={22} /><span className="eyebrow gold">SEGURANÇA</span><h2>Seu acesso é individual</h2><p className="muted">A senha só pode ser redefinida por um administrador da operação. Se precisar de ajuda, fale com a gestão.</p><div className="security-row"><LockKeyhole size={17} /><span>Autenticação por e-mail e senha</span></div><div className="security-row"><Users size={17} /><span>Permissões baseadas no perfil</span></div></aside></div></>;
+}
+
+/* =========================================================================
+   PÁGINA HOME PÚBLICA (VITRINE DO CATÁLOGO) — SEM AUTENTICAÇÃO
+   Design moderno, UI/UX sênior, seguindo o design system do produto.
+   ========================================================================= */
+
+type CategoryChip = { id: string; name: string; count: number };
+type BrandChip = { id: string; name: string; count: number; accent_color?: string };
+
+function PublicCatalog() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [loading, setLoading] = useState(true);
+  const [machines, setMachines] = useState<Machine[]>(demoMachines);
+  const [categories, setCategories] = useState<CategoryChip[]>([]);
+  const [brands, setBrands] = useState<BrandChip[]>([]);
+  const [query, setQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+
+  // ============ Carrega dados (público, sem profile necessário) ============
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        // 1) Máquinas + fotos (mesmo carregamento do admin mas sem precisar de auth pq RLS tem SELECT público)
+        const cols = [
+          'id','code','internal_code','brand','model','display_name',
+          'category','category_id','price','value','down_payment','installment',
+          'year','manufacture_year','status','power','operating_weight','hours','location',
+          'description','notes','applications','specs',
+          'categories:category_id(name)',
+          'machine_photos(id,storage_path,public_url,is_primary,photo_type)'
+        ].join(',');
+        let rows: Array<Record<string, unknown>> = [];
+        const q = await supabase
+          .from('machines')
+          .select(cols, { head: false })
+          .eq('status', 'available')
+          .order('updated_at', { ascending: false });
+        if (q.error || !q.data || q.data.length === 0) {
+          const fb = await supabase.from('machines').select('*').eq('status', 'available').order('updated_at', { ascending: false });
+          if (fb.data && fb.data.length > 0) rows = fb.data.map(r => r as unknown as Record<string, unknown>);
+        } else {
+          rows = q.data.map(r => r as unknown as Record<string, unknown>);
+        }
+        if (rows.length > 0) {
+          const ids = rows.map(r => String(r.id));
+          const photosByMachine: Record<string, MachinePhoto[]> = {};
+          try {
+            const pr = await supabase
+              .from('machine_photos')
+              .select('id,machine_id,storage_path,public_url,is_primary,photo_type')
+              .in('machine_id', ids);
+            if (pr.data && pr.data.length > 0) {
+              for (const p of pr.data as Array<MachinePhoto & { machine_id: string }>) {
+                const k = String(p.machine_id);
+                (photosByMachine[k] ||= []).push(p);
+              }
+            } else {
+              const ir = await supabase
+                .from('machine_images')
+                .select('id,machine_id,storage_path,public_url,image_url,is_main,photo_type,label')
+                .in('machine_id', ids);
+              if (ir.data && ir.data.length > 0) {
+                for (const p of ir.data as Array<MachinePhoto & { image_url?: string; is_main?: boolean; label?: string; machine_id: string }>) {
+                  const k = String(p.machine_id);
+                  (photosByMachine[k] ||= []).push({
+                    public_url: p.public_url ?? p.image_url,
+                    storage_path: p.storage_path,
+                    is_primary: isPrincipalPhoto(p),
+                    photo_type: (typeof p.photo_type === 'string' && p.photo_type) || p.label || 'other'
+                  });
+                }
+              }
+            }
+          } catch (err) { console.warn(err); }
+          const list = rows.map(r => {
+            const k = String(r.id);
+            const attached = photosByMachine[k];
+            if (attached && attached.length > 0) return mapMachineRow({ ...r, machine_photos: attached });
+            return mapMachineRow(r);
+          });
+          setMachines(list);
+        } else {
+          setMachines(demoMachines);
+        }
+
+        // 2) Categorias
+        const catRows: CategoryChip[] = [];
+        try {
+          const cr = await supabase.from('categories').select('id,name').eq('is_active', true).order('name');
+          if (cr.data) for (const c of cr.data as Array<{ id: string; name: string }>) catRows.push({ id: c.id, name: c.name, count: 0 });
+        } catch { /* ignore */ }
+        if (catRows.length === 0) {
+          // fallback: monta categorias pelas próprias máquinas
+          const seen = new Map<string, CategoryChip>();
+          for (const m of machines) {
+            if (!m.category) continue;
+            const key = m.category.toLowerCase();
+            if (!seen.has(key)) seen.set(key, { id: key, name: m.category.toUpperCase(), count: 0 });
+          }
+          for (const v of seen.values()) catRows.push(v);
+        }
+        // Conta por categoria
+        for (const c of catRows) {
+          c.count = machines.filter(m => m.category && (String(m.category_id) === c.id || m.category.toLowerCase() === c.id || m.category.toUpperCase() === c.name)).length;
+        }
+        // Categorias que vieram do nome da máquina (sem category_id) tb contam com count > 0
+        const extras = new Map<string, number>();
+        for (const m of machines) {
+          if (!m.category) continue;
+          const exists = catRows.some(c => c.name.toLowerCase() === m.category.toLowerCase() || c.id === String(m.category_id));
+          if (!exists) extras.set(m.category.toUpperCase(), (extras.get(m.category.toUpperCase()) || 0) + 1);
+        }
+        for (const [name, count] of extras.entries()) {
+          catRows.push({ id: name.toLowerCase(), name, count });
+        }
+        setCategories(catRows.filter(c => c.count > 0).sort((a, b) => b.count - a.count));
+
+        // 3) Marcas
+        const brandRows: BrandChip[] = [];
+        try {
+          const br = await supabase.from('brands').select('id,name,accent_color').eq('is_active', true).order('name');
+          if (br.data) for (const b of br.data as Array<{ id: string; name: string; accent_color?: string }>) brandRows.push({ id: b.id, name: b.name, accent_color: b.accent_color, count: 0 });
+        } catch { /* ignore */ }
+        if (brandRows.length === 0) {
+          const seen = new Map<string, BrandChip>();
+          for (const m of machines) {
+            if (!m.brand) continue;
+            const key = m.brand.toLowerCase();
+            if (!seen.has(key)) seen.set(key, { id: key, name: m.brand.toUpperCase(), count: 0 });
+          }
+          for (const v of seen.values()) brandRows.push(v);
+        }
+        for (const b of brandRows) b.count = machines.filter(m => m.brand && (String(m.brand).toLowerCase() === b.name.toLowerCase() || String(m.brand) === b.id)).length;
+        const extrasB = new Map<string, number>();
+        for (const m of machines) {
+          if (!m.brand) continue;
+          const exists = brandRows.some(b => b.name.toLowerCase() === m.brand.toLowerCase());
+          if (!exists) extrasB.set(m.brand.toUpperCase(), (extrasB.get(m.brand.toUpperCase()) || 0) + 1);
+        }
+        for (const [name, count] of extrasB.entries()) brandRows.push({ id: name.toLowerCase(), name, count });
+        setBrands(brandRows.filter(b => b.count > 0).sort((a, b) => b.count - a.count));
+      } catch (e) { console.error(e); } finally { setLoading(false); }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ============ Filtros ============
+  const filtered = machines.filter(m => {
+    const hay = `${m.display_name} ${m.brand} ${m.model} ${m.category} ${m.location}`.toLowerCase();
+    if (query.trim() && !hay.includes(query.toLowerCase())) return false;
+    if (selectedCategory) {
+      const match = m.category && (
+        String(m.category_id) === selectedCategory ||
+        m.category.toLowerCase() === selectedCategory.toLowerCase() ||
+        m.category.toUpperCase() === selectedCategory.toUpperCase()
+      );
+      if (!match) return false;
+    }
+    if (selectedBrand) {
+      const match = m.brand && (m.brand.toLowerCase() === selectedBrand.toLowerCase() || String(m.brand) === selectedBrand);
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  const groupedByCategory = new Map<string, Machine[]>();
+  for (const m of filtered) {
+    const k = (m.category || 'OUTROS').toUpperCase();
+    if (!groupedByCategory.has(k)) groupedByCategory.set(k, []);
+    groupedByCategory.get(k)!.push(m);
+  }
+  const groupOrder = Array.from(groupedByCategory.keys()).sort();
+
+  // ============ Funções de card ============
+  const goDetail = (id: string) => navigate(`/maquina/${id}`, { state: { fromPublic: true } });
+  const copyOffer = (m: Machine) => {
+    const lines = [
+      `*${m.display_name.toUpperCase()}*`,
+      `*Valor:* ${money(m.value)}`,
+      `*Entrada:* ${money(m.entry)}`,
+      `*Parcela:* ${money(m.installment)}/mês`,
+      m.year ? `*Ano:* ${m.year}` : null,
+      m.power ? `*Potência:* ${m.power}` : null,
+      m.hours ? `*Horas:* ${m.hours}` : null,
+      m.location ? `*Local:* ${m.location}` : null,
+    ].filter(Boolean).join('\n');
+    try {
+      if (navigator.clipboard) navigator.clipboard.writeText(lines);
+      alert('Oferta copiada!');
+    } catch { alert(lines); }
+  };
+  const statusLabel = (s: string) => {
+    switch (normalizeStatus(s)) {
+      case 'available': return { label: 'DISPONÍVEL', cls: 'available' };
+      case 'negotiating': return { label: 'EM NEGOCIAÇÃO', cls: 'reserved' };
+      case 'sold': return { label: 'VENDIDO', cls: 'sold' };
+      default: return { label: 'INDISPONÍVEL', cls: 'sold' };
+    }
+  };
+
+  return (
+    <div className="public-home" style={{ minHeight: '100vh', background: '#f5f2ec' }}>
+      {/* ===================== HEADER PÚBLICO ===================== */}
+      <header className="public-header" style={{
+        background: '#fff',
+        borderBottom: '1px solid #ece4d0',
+        position: 'sticky', top: 0, zIndex: 50,
+      }}>
+        <div style={{
+          maxWidth: 1200, margin: '0 auto', padding: '14px 22px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20,
+        }}>
+          <div style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
+            <Logo />
+          </div>
+          <div className="public-search" style={{
+            flex: 1, maxWidth: 720, position: 'relative',
+            display: 'flex', alignItems: 'center',
+          }}>
+            <Search size={17} style={{ position: 'absolute', left: 14, color: '#8c8166' }} />
+            <input
+              value={query} onChange={e => setQuery(e.target.value)}
+              placeholder="Pesquisar máquina, marca ou modelo…"
+              style={{
+                width: '100%', padding: '12px 16px 12px 42px', borderRadius: 14,
+                border: '1px solid #e3dbc5', background: '#fbf7ee', fontSize: 14,
+                outline: 'none', color: '#1c1917',
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = '#b8963f'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(184,150,63,0.15)'; e.currentTarget.style.background = '#fff'; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = '#e3dbc5'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.background = '#fbf7ee'; }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button
+              className="button button-outline"
+              onClick={() => navigate('/comparar', { state: { fromPublic: true } })}
+              style={{ padding: '10px 16px', fontSize: 14, background: '#fff' }}
+            >
+              <Grid2X2 size={15}/> Comparar máquinas
+            </button>
+            <button
+              className="button button-primary"
+              onClick={() => navigate('/login')}
+              style={{ padding: '10px 18px', fontSize: 14 }}
+            >
+              <LockKeyhole size={15}/> Acesso equipe
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* ===================== HERO / INTRO ===================== */}
+      <section style={{ maxWidth: 1200, margin: '24px auto 10px', padding: '0 22px' }}>
+        <div style={{
+          background: '#fff',
+          border: '1px solid #efe7d0',
+          borderRadius: 20,
+          padding: '30px 32px 24px',
+          display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: 28, alignItems: 'center',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+        }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span className="eyebrow" style={{ color: '#b8963f' }}>EIXO-CATÁLOGO</span>
+            </div>
+            <h1 style={{ fontSize: 36, letterSpacing: '-.035em', lineHeight: 1.08, margin: '0 0 12px' }}>
+              Catálogo de <span style={{ color: '#b8963f' }}>Máquinas</span>
+            </h1>
+            <p className="muted" style={{ fontSize: 15, maxWidth: 520, marginBottom: 20 }}>
+              Consulta rápida para SDRs e vendedores do time Eixo — modelos, especificações, valores, entradas e parcelas durante o atendimento.
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <button className="button button-primary" onClick={() => {
+                const el = document.getElementById('vitrine-grid');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }} style={{ padding: '12px 20px' }}>
+                <Zap size={16}/> Encontrar minha máquina
+              </button>
+              <button className="button button-outline" onClick={() => navigate('/comparar', { state: { fromPublic: true } })} style={{ padding: '12px 20px', background: '#fff' }}>
+                <Grid2X2 size={16}/> Comparar máquinas
+              </button>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '6px 12px', borderRadius: 999,
+                background: '#ecfdf5', color: '#065f46',
+                fontSize: 12, fontWeight: 600, border: '1px solid #bbf7d0',
+              }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
+                Atualizado em tempo real
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: -6, alignItems: 'flex-end', justifyContent: 'center' }}>
+            {[
+              machines.find(m => !!m.image)?.image,
+              machines.find(m => m.id !== machines.find(x => x.image)?.id && !!m.photos?.[0]?.public_url)?.photos?.[0]?.public_url,
+            ].filter(Boolean).slice(0, 2).map((src, i) => (
+              <div key={i} style={{
+                width: 220, height: 160, borderRadius: 18, overflow: 'hidden',
+                background: 'linear-gradient(135deg, #fff4d6 0%, #f4e6b9 100%)',
+                border: '1px solid #ede2c0',
+                marginLeft: i === 1 ? -40 : 0,
+                boxShadow: '0 8px 30px rgba(184, 150, 63, 0.14)',
+                zIndex: i === 0 ? 2 : 1,
+              }}>
+                {src ? (
+                  <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
+                    <ImageIcon size={52} style={{ color: '#b8963f', opacity: 0.75 }} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ===================== FILTROS ===================== */}
+      <section style={{ maxWidth: 1200, margin: '24px auto 0', padding: '0 22px' }}>
+        {/* Categorias */}
+        <div style={{ marginBottom: 14 }}>
+          <div className="eyebrow" style={{ color: '#78716c', fontSize: 12, letterSpacing: '.08em', margin: '0 0 10px 2px' }}>CATEGORIAS</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            <button
+              onClick={() => setSelectedCategory(null)}
+              style={{
+                padding: '10px 16px', borderRadius: 999, border: '1px solid',
+                borderColor: !selectedCategory ? '#b8963f' : '#e3dbc5',
+                background: !selectedCategory ? '#fef9ea' : '#fff',
+                color: !selectedCategory ? '#8b6f1d' : '#44403c',
+                fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 10,
+                boxShadow: !selectedCategory ? 'inset 0 0 0 1px rgba(184,150,63,0.25)' : 'none',
+              }}
+            >
+              <LayoutDashboard size={14}/> Todas
+              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: !selectedCategory ? '#f4e5b4' : '#f3efe4', color: '#524412', fontWeight: 700 }}>
+                {machines.length}
+              </span>
+            </button>
+            {categories.map(c => {
+              const active = selectedCategory === c.id || selectedCategory === c.name;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedCategory(active ? null : c.id)}
+                  style={{
+                    padding: '10px 16px', borderRadius: 999, border: '1px solid',
+                    borderColor: active ? '#b8963f' : '#e3dbc5',
+                    background: active ? '#fef9ea' : '#fff',
+                    color: active ? '#8b6f1d' : '#44403c',
+                    fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: 10,
+                  }}
+                >
+                  <Package size={14} style={{ opacity: 0.75 }} /> {c.name}
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: active ? '#f4e5b4' : '#f3efe4', color: '#524412', fontWeight: 700 }}>
+                    {c.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Marcas */}
+        <div>
+          <div className="eyebrow" style={{ color: '#78716c', fontSize: 12, letterSpacing: '.08em', margin: '0 0 10px 2px' }}>MARCAS</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            <button
+              onClick={() => setSelectedBrand(null)}
+              style={{
+                padding: '8px 14px', borderRadius: 999, border: '1px solid',
+                borderColor: !selectedBrand ? '#b8963f' : '#e3dbc5',
+                background: !selectedBrand ? '#fef9ea' : '#fff',
+                color: !selectedBrand ? '#8b6f1d' : '#44403c',
+                fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              Todas
+            </button>
+            {brands.map(b => {
+              const active = selectedBrand === b.id || selectedBrand === b.name;
+              return (
+                <button
+                  key={b.id}
+                  onClick={() => setSelectedBrand(active ? null : b.id)}
+                  style={{
+                    padding: '8px 14px', borderRadius: 999, border: '1px solid',
+                    borderColor: active ? '#b8963f' : '#e3dbc5',
+                    background: active ? '#fef9ea' : '#fff',
+                    color: active ? '#8b6f1d' : '#44403c',
+                    fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: 8,
+                  }}
+                >
+                  <Tags size={12} style={{ opacity: 0.7 }} /> {b.name}
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#78716c' }}>{b.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Resultado */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '22px 0 12px', flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ fontSize: 14, color: '#44403c', fontWeight: 600 }}>
+            {loading ? 'Carregando…' : `${filtered.length} máquina${filtered.length === 1 ? '' : 's'} encontrada${filtered.length === 1 ? '' : 's'}`}
+            {selectedCategory && <> · categoria <b style={{ color: '#8b6f1d' }}>{categories.find(c => c.id === selectedCategory || c.name.toLowerCase() === selectedCategory.toLowerCase())?.name || selectedCategory.toUpperCase()}</b></>}
+            {selectedBrand && <> · marca <b style={{ color: '#8b6f1d' }}>{brands.find(b => b.id === selectedBrand || b.name.toLowerCase() === selectedBrand.toLowerCase())?.name || selectedBrand.toUpperCase()}</b></>}
+          </div>
+          <button className="button button-outline" onClick={() => navigate('/comparar', { state: { fromPublic: true } })} style={{ padding: '8px 14px', fontSize: 13, background: '#fff' }}>
+            <Grid2X2 size={14}/> Ir para Comparar →
+          </button>
+        </div>
+      </section>
+
+      {/* ===================== GRID DE CARDS (POR CATEGORIA) ===================== */}
+      <main id="vitrine-grid" style={{ maxWidth: 1200, margin: '0 auto 52px', padding: '10px 22px 20px' }}>
+        {loading ? (
+          <div className="empty-state" style={{ background: '#fff', borderRadius: 18, border: '1px solid #ece4d0', padding: 60 }}>
+            <div className="spinner" style={{ marginBottom: 10 }} />
+            <p className="muted">Carregando vitrine…</p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="empty-state" style={{ background: '#fff', borderRadius: 18, border: '1px solid #ece4d0', padding: 60 }}>
+            <Package size={36} style={{ color: '#b8963f', marginBottom: 8 }} />
+            <h3 style={{ margin: 0 }}>Nenhuma máquina corresponde aos filtros</h3>
+            <p className="muted" style={{ maxWidth: 520 }}>Tente limpar os filtros de categoria e marca ou pesquisar outro termo.</p>
+            <button className="button button-outline" onClick={() => { setQuery(''); setSelectedCategory(null); setSelectedBrand(null); }} style={{ marginTop: 6 }}>
+              Limpar filtros
+            </button>
+          </div>
+        ) : (
+          groupOrder.map(catName => {
+            const list = groupedByCategory.get(catName)!;
+            return (
+              <section key={catName} style={{ marginBottom: 34 }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  margin: '0 0 14px',
+                  padding: '2px 4px',
+                  borderBottom: '1px dashed #e2d9be',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      width: 30, height: 30, borderRadius: 10, background: '#fef4d6',
+                      display: 'grid', placeItems: 'center', color: '#8b6f1d',
+                      border: '1px solid #f2e3ad',
+                    }}>
+                      <Package size={15}/>
+                    </div>
+                    <h3 style={{ fontSize: 14, color: '#524412', fontWeight: 700, letterSpacing: '.1em' }}>{catName}</h3>
+                  </div>
+                  <span style={{ fontSize: 12, color: '#78716c', fontWeight: 600, letterSpacing: '.06em' }}>
+                    {list.length} MODELO{list.length === 1 ? '' : 'S'}
+                  </span>
+                </div>
+                <div className="public-grid" style={{
+                  display: 'grid', gap: 18,
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(248px, 1fr))',
+                }}>
+                  {list.map(m => {
+                    const st = statusLabel(m.status);
+                    const primaryImg = m.photos?.find(p => !!p.public_url)?.public_url || m.image;
+                    return (
+                      <article key={m.id} className="public-card" style={{
+                        background: '#fff',
+                        border: '1px solid #ece4d0',
+                        borderRadius: 18,
+                        overflow: 'hidden',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                        display: 'flex', flexDirection: 'column',
+                        transition: 'transform 120ms ease, box-shadow 120ms ease',
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-2px)';
+                        e.currentTarget.style.boxShadow = '0 10px 30px rgba(184,150,63,0.12)';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.transform = '';
+                        e.currentTarget.style.boxShadow = '';
+                      }}>
+                        {/* IMAGEM + STATUS */}
+                        <div style={{
+                          position: 'relative',
+                          aspectRatio: '4 / 3',
+                          background: 'linear-gradient(135deg, #f3efe2 0%, #e8dfc6 100%)',
+                          borderBottom: '1px solid #ece4d0',
+                          overflow: 'hidden',
+                        }}>
+                          {primaryImg ? (
+                            <img src={primaryImg} alt={m.display_name} style={{
+                              width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+                            }} />
+                          ) : (
+                            <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
+                              <div style={{ textAlign: 'center', color: '#b8963f' }}>
+                                <ImageIcon size={54} style={{ opacity: 0.85 }} />
+                                <div style={{ marginTop: 10, fontSize: 11, fontWeight: 600, letterSpacing: '.08em', color: '#78716c' }}>
+                                  FOTO NÃO CADASTRADA
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          <div style={{
+                            position: 'absolute', top: 12, left: 12,
+                            display: 'flex', alignItems: 'center', gap: 10,
+                          }}>
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 6,
+                              padding: '5px 10px', borderRadius: 999,
+                              fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
+                              background: st.cls === 'available' ? '#ecfdf5' : st.cls === 'reserved' ? '#fff8e1' : '#fef2f2',
+                              color: st.cls === 'available' ? '#065f46' : st.cls === 'reserved' ? '#92400e' : '#991b1b',
+                              border: '1px solid ' + (st.cls === 'available' ? '#bbf7d0' : st.cls === 'reserved' ? '#fde68a' : '#fecaca'),
+                            }}>
+                              <span style={{ width: 7, height: 7, borderRadius: '50%', background: st.cls === 'available' ? '#10b981' : st.cls === 'reserved' ? '#f59e0b' : '#ef4444' }} />
+                              {st.label}
+                            </span>
+                          </div>
+                          <div style={{
+                            position: 'absolute', top: 12, right: 12,
+                            background: 'rgba(17,17,17,0.72)', color: '#fff',
+                            borderRadius: 999, fontSize: 10, fontWeight: 700,
+                            padding: '5px 10px', letterSpacing: '.08em',
+                          }}>
+                            #{(m.internal_code || m.id.slice(0, 3)).toUpperCase()}
+                          </div>
+                        </div>
+
+                        {/* NOME */}
+                        <div style={{ padding: '16px 16px 4px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <div style={{ fontSize: 11, color: '#78716c', fontWeight: 600, letterSpacing: '.08em' }}>
+                            {catName}
+                          </div>
+                          <div style={{
+                            fontSize: 15, fontWeight: 800, color: '#1c1917', letterSpacing: '-.015em', lineHeight: 1.2,
+                            minHeight: 36,
+                          }}>
+                            {`${(m.brand || '').toUpperCase()} ${m.model || ''}`.trim()}
+                          </div>
+                          <div style={{ marginTop: 2 }}>
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 6,
+                              padding: '4px 10px', borderRadius: 999,
+                              background: '#fef9ea', color: '#8b6f1d',
+                              border: '1px solid #f2e3ad',
+                              fontSize: 11, fontWeight: 700,
+                            }}>
+                              <Check size={12}/> NOVA DE FÁBRICA
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* VALOR */}
+                        <div style={{ padding: '10px 16px' }}>
+                          <div style={{
+                            background: '#fef9ea',
+                            border: '1px solid #f2e3ad',
+                            borderRadius: 14,
+                            padding: '12px 14px',
+                          }}>
+                            <div style={{
+                              fontSize: 10, color: '#8b6f1d', fontWeight: 700, letterSpacing: '.12em',
+                              display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2,
+                            }}>
+                              <Calculator size={12}/> VALOR
+                            </div>
+                            <div style={{
+                              fontSize: 22, fontWeight: 800, color: '#1c1917', letterSpacing: '-.02em', lineHeight: 1,
+                            }}>
+                              {money(m.value)}
+                            </div>
+                            <div style={{
+                              marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10,
+                            }}>
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 600, color: '#78716c', letterSpacing: '.08em' }}>ENTRADA</div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: '#292524' }}>{money(m.entry)}</div>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 600, color: '#78716c', letterSpacing: '.08em' }}>PARCELA</div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: '#292524' }}>{money(m.installment)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* AÇÕES */}
+                        <div style={{ padding: '4px 16px 16px', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <button className="button button-primary" onClick={() => copyOffer(m)} style={{ width: '100%', padding: '11px 16px', fontSize: 13, justifyContent: 'center', gap: 8 }}>
+                            <Clipboard size={15}/> Copiar oferta
+                          </button>
+                          <button className="button button-outline" onClick={() => goDetail(m.id)} style={{ width: '100%', padding: '10px 16px', fontSize: 13, justifyContent: 'center', background: '#fff' }}>
+                            Ver detalhes <ChevronRight size={15}/>
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })
+        )}
+      </main>
+
+      {/* ===================== FOOTER PÚBLICO ===================== */}
+      <footer style={{
+        background: '#14120f',
+        color: '#d6d3d1',
+        padding: '28px 22px 34px',
+      }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr auto', gap: 20, alignItems: 'center' }}>
+          <div>
+            <div style={{ color: '#fff', fontWeight: 800, fontSize: 18 }}>Eixo-Catálogo</div>
+            <div style={{ color: '#a8a29e', fontSize: 13, marginTop: 4 }}>
+              Operação comercial · {new Date().getFullYear()} — Todos os direitos reservados.
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button className="button button-outline" onClick={() => navigate('/comparar', { state: { fromPublic: true } })} style={{ padding: '10px 16px', fontSize: 13, background: 'transparent', borderColor: '#3f3a33', color: '#fff' }}>
+              <Grid2X2 size={14}/> Comparar
+            </button>
+            <button className="button button-primary" onClick={() => navigate('/login')} style={{ padding: '10px 18px', fontSize: 13 }}>
+              <LockKeyhole size={14}/> Acesso equipe
+            </button>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function App() {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [machines, setMachines] = useState<Machine[]>(demoMachines);
+
+  // Carregamento de máquinas (tanto público quanto autenticado)
+  // Carrega MESMO SEM profile — RLS tem SELECT público para visitantes
+  useEffect(() => {
+    (async () => {
+      const cols = [
+        'id','code','internal_code','brand','model','display_name',
+        'category','category_id','price','value','down_payment','installment',
+        'year','manufacture_year','status','power','operating_weight','hours','location',
+        'description','notes','applications','specs',
+        'categories:category_id(name)',
+        'machine_photos(id,storage_path,public_url,is_primary,photo_type)'
+      ].join(',');
+      let rows: Array<Record<string, unknown>> = [];
+      const q = await supabase
+        .from('machines')
+        .select(cols, { head: false })
+        .order('updated_at', { ascending: false });
+      if (q.error || !q.data || q.data.length === 0) {
+        if (q.error) console.warn('Query com joins falhou, tentando fallback', q.error.message);
+        const fb = await supabase.from('machines').select('*').order('updated_at', { ascending: false });
+        if (fb.data && fb.data.length > 0) rows = fb.data.map(r => r as unknown as Record<string, unknown>);
+      } else {
+        rows = q.data.map(r => r as unknown as Record<string, unknown>);
+      }
+      if (rows.length === 0) { setMachines([]); return; }
+
+      const ids = rows.map(r => String(r.id));
+      const photosByMachine: Record<string, MachinePhoto[]> = {};
+      let photosOk = false;
+      try {
+        const pr = await supabase
+          .from('machine_photos')
+          .select('id,machine_id,storage_path,public_url,is_primary,photo_type')
+          .in('machine_id', ids);
+        if (pr.data && pr.data.length > 0) {
+          for (const p of pr.data as Array<MachinePhoto & { machine_id: string }>) {
+            const k = String(p.machine_id);
+            (photosByMachine[k] ||= []).push(p);
+          }
+          photosOk = true;
+        } else if (pr.error) {
+          console.warn('machine_photos query falhou, tentando machine_images', pr.error.message);
+        } else {
+          photosOk = true;
+        }
+      } catch (err) {
+        console.warn('machine_photos exceção, tentando machine_images', err);
+      }
+      if (!photosOk || Object.keys(photosByMachine).length === 0) {
+        try {
+          const ir = await supabase
+            .from('machine_images')
+            .select('id,machine_id,storage_path,public_url,image_url,is_main,photo_type,label')
+            .in('machine_id', ids);
+          if (ir.data && ir.data.length > 0) {
+            for (const k of Object.keys(photosByMachine)) delete photosByMachine[k];
+            for (const p of ir.data as Array<MachinePhoto & { image_url?: string; is_main?: boolean; label?: string; machine_id: string }>) {
+              const k = String(p.machine_id);
+              (photosByMachine[k] ||= []).push({
+                public_url: p.public_url ?? p.image_url,
+                storage_path: p.storage_path,
+                is_primary: isPrincipalPhoto(p),
+                photo_type: (typeof p.photo_type === 'string' && p.photo_type) || p.label || 'other'
+              });
+            }
+          } else if (ir.error) {
+            console.warn('machine_images também falhou', ir.error.message);
+          }
+        } catch (err) {
+          console.warn('machine_images exceção', err);
+        }
+      }
+
+      setMachines(rows.map(r => {
+        const k = String(r.id);
+        const attached = photosByMachine[k];
+        if (attached && attached.length > 0) {
+          const rowPhotos = (r.machine_photos as MachinePhoto[] | undefined) ?? [];
+          if (rowPhotos.length === 0) {
+            return mapMachineRow({ ...r, machine_photos: attached });
+          }
+        }
+        return mapMachineRow(r);
+      }));
+    })();
+  }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.user)
+        getProfile(data.session.user.id).then(setProfile).catch(() => supabase.auth.signOut()).finally(() => setLoading(false));
+      else setLoading(false);
+    });
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      (async () => {
+        if (!session) setProfile(null);
+        else {
+          try { setProfile(await getProfile(session.user.id)); }
+          catch { await supabase.auth.signOut(); }
+        }
+      })();
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  const logout = async () => { await supabase.auth.signOut(); setProfile(null); };
+  if (loading) return <Loading />;
+
+  // Usuário NÃO logado: rotas públicas, SEM sidebar de jeito nenhum
+  if (!profile) {
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<PublicCatalog />} />
+          <Route path="/vitrine" element={<PublicCatalog />} />
+          <Route path="/maquina/:id" element={<MachineDetail machines={machines} />} />
+          <Route path="/comparar" element={<Compare machines={machines} />} />
+          <Route path="/login" element={<Auth onAuth={setProfile} />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    );
+  }
+
+  // Usuário LOGADO: Home / e /vitrine sem sidebar; todo o resto (catalogo, admin, comparar, maquina, etc) DENTRO do AppShell com sidebar.
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<PublicCatalog />} />
+        <Route path="/vitrine" element={<PublicCatalog />} />
+        <Route
+          path="*"
+          element={
+            <AppShell profile={profile} onLogout={logout}>
+              <Routes>
+                <Route path="/catalogo" element={<Catalog machines={machines} />} />
+                <Route path="/maquina/:id" element={<MachineDetail machines={machines} />} />
+                <Route path="/comparar" element={<Compare machines={machines} />} />
+                <Route path="/propostas" element={<Proposals />} />
+                <Route path="/perfil" element={<ProfilePage profile={profile} onUpdate={setProfile} />} />
+                <Route path="/login" element={<Navigate to="/admin" replace />} />
+                <Route path="/vitrine" element={<Navigate to="/vitrine" replace />} />
+                <Route path="/admin" element={profile.role === 'admin' ? <AdminDashboard machines={machines} /> : <Navigate to="/catalogo" replace />} />
+                <Route path="/admin/maquinas" element={profile.role === 'admin' ? <AdminMachines machines={machines} setMachines={setMachines} /> : <Navigate to="/catalogo" replace />} />
+                <Route path="/admin/maquinas/:id" element={profile.role === 'admin' ? <MachineForm machines={machines} setMachines={setMachines} /> : <Navigate to="/catalogo" replace />} />
+                <Route path="/admin/marcas" element={profile.role === 'admin' ? <Brands machines={machines} /> : <Navigate to="/catalogo" replace />} />
+                <Route path="/admin/categorias" element={profile.role === 'admin' ? <Categories /> : <Navigate to="/catalogo" replace />} />
+                <Route path="/admin/usuarios" element={profile.role === 'admin' ? <AdminUsers /> : <Navigate to="/catalogo" replace />} />
+                <Route path="*" element={<Navigate to={profile.role === 'admin' ? '/admin' : '/catalogo'} replace />} />
+              </Routes>
+            </AppShell>
+          }
+        />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+export default App;

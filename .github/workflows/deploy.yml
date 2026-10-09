@@ -1,0 +1,86 @@
+name: Deploy React para Hospedagem Compartilhada
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    name: 🏗️ Build & 🚀 Deploy (catalogo.eixoconsorcios.com.br)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚚 Baixar código mais recente
+        uses: actions/checkout@v4
+
+      - name: 🟢 Instalar Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Instalar dependências
+        run: npm ci --legacy-peer-deps
+
+      - name: 🛠️ Build do projeto (gera pasta dist/)
+        run: npm run build
+        env:
+          # Se você adicionar novas variáveis VITE_ no Supabase .env,
+          # coloque o valor correspondente em GitHub Secrets (Settings → Secrets and variables → Actions)
+          # e descomente as linhas abaixo:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: 🔍 Verificar arquivos gerados em dist/
+        run: |
+          echo "Tamanho do dist:"
+          du -sh ./dist/
+          echo ""
+          echo "Conteúdo do dist:"
+          ls -lah ./dist/ || true
+          echo ""
+          echo ".htaccess existe?"
+          test -f ./dist/.htaccess && echo "✅ SIM - .htaccess copiado com sucesso" || echo "❌ NÃO"
+
+      - name: 📂 Sincronizar dist/ → servidor FTP (hospedagem)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          # ===== Credenciais FTP (definir em GitHub Secrets): =====
+          #   FTP_SERVER     → ex: ftp.catalogo.eixoconsorcios.com.br
+          #   FTP_USERNAME   → ex: catalogo@eixoconsorcios.com.br
+          #   FTP_PASSWORD   → senha da conta FTP
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+
+          # ===== Configuração de caminhos =====
+          # Pasta local (do projeto) que será enviada
+          local-dir: ./dist/
+
+          # Caminho NA HOSPEDAGEM (pasta onde ficam os arquivos públicos do domínio)
+          # Na maioria das hospedagens compartilhadas (Locaweb/Hostinger/KingHost/GoDaddy)
+          # fica em: ./public_html/catalogo.eixoconsorcios.com.br/  OU  ./catalogo.eixoconsorcios.com.br/
+          # Ajuste abaixo se o seu provedor usar outro path:
+          server-dir: ./catalogo.eixoconsorcios.com.br/
+
+          # ===== Segurança / performance =====
+          # Exclui arquivos sensíveis que não devem ir para a hospedagem
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.github/**
+            **/README.md
+            **/.env
+            **/.env.*
+            **/composer.json
+
+          # Se for servidor com FTPS (FTP over TLS), descomente a linha abaixo:
+          # protocol: ftps
+
+          # Em caso de erro de permissão / arquivos antigos travados, habilite:
+          # dangerous-clean-slate: true
+
+          log-level: standard
