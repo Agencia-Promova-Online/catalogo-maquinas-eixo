@@ -349,7 +349,235 @@ function MachineDetail({ machines }: { machines: Machine[] }) {
   </>;
 }
 
-function Compare({ machines }: { machines: Machine[] }) { const [query, setQuery] = useState(''); const [selected, setSelected] = useState<string[]>(['m1', 'm2']); const choices = machines.filter(m => `${m.brand} ${m.model} ${m.category}`.toLowerCase().includes(query.toLowerCase())); const current = selected.map(id => machines.find(m => m.id === id)).filter(Boolean) as Machine[]; const toggle = (id: string) => setSelected(prev => prev.includes(id) ? prev.filter(item => item !== id) : prev.length < 3 ? [...prev, id] : prev); const allSpecs = [...new Set(current.flatMap(m => Object.keys(m.specs)))].sort(); return <><PageHeader kicker="DECISÃO COMERCIAL" title="Comparar máquinas" description="Coloque até três opções lado a lado e encontre a melhor oferta para cada cliente." action={<button className="button button-outline" onClick={() => setSelected([])}><X size={16} /> Limpar seleção</button>} /><div className="compare-picker"><div className="result-line"><strong>{selected.length} de 3 selecionadas</strong><span>Escolha as fichas que deseja comparar</span></div><div className="search-box"><Search size={17} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar marca, modelo ou categoria..." /></div><div className="choice-list">{choices.map(m => <button key={m.id} className={selected.includes(m.id) ? 'choice selected' : 'choice'} onClick={() => toggle(m.id)} disabled={!selected.includes(m.id) && selected.length >= 3}><span>{m.image ? <img src={m.image} alt="" /> : <Package size={18} />}</span><div><strong>{m.display_name}</strong><small>{m.category}</small></div>{selected.includes(m.id) && <Check size={16} />}</button>)}</div></div>{current.length < 2 ? <div className="empty-state"><Grid2X2 size={34} /><h3>Selecione pelo menos duas máquinas</h3><p>A comparação aparecerá automaticamente aqui.</p></div> : <div className="comparison-grid">{current.map(m => <article className="comparison-card" key={m.id}><div className="compare-image">{m.image ? <img src={m.image} alt={m.display_name} /> : <ImageIcon size={30} />}</div><span className="eyebrow gold">{m.brand}</span><h2>{m.display_name}</h2><small>{m.category} · {m.year}</small><div className="compare-prices"><div><span>VALOR</span><strong>{money(m.value)}</strong></div><div><span>ENTRADA</span><b>{money(m.entry)}</b></div><div><span>PARCELA</span><b>{money(m.installment)}</b></div></div><div className="compare-specs">{allSpecs.map(spec => <div key={spec}><span>{spec}</span><strong className={m.specs[spec] ? '' : 'pending'}>{m.specs[spec] || 'Em validação'}</strong></div>)}</div><Link className="button button-outline full" to={`/maquina/${m.id}`}>Ver detalhes <ChevronRight size={15} /></Link></article>)}</div>}</>; }
+function Compare({ machines }: { machines: Machine[] }) {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<string[]>([]);
+  const choices = machines.filter(m => `${m.brand} ${m.model} ${m.category} ${m.display_name} ${m.location || ''}`.toLowerCase().includes(query.toLowerCase()));
+  const current = selected.map(id => machines.find(m => m.id === id)).filter(Boolean) as Machine[];
+  const toggle = (id: string) => setSelected(prev => {
+    if (prev.includes(id)) return prev.filter(item => item !== id);
+    if (prev.length >= 3) return prev;
+    return [...prev, id];
+  });
+  const allSpecs = [...new Set(current.flatMap(m => Object.keys(m.specs)))].sort();
+  const slots = 3;
+  return (
+    <>
+      <PageHeader
+        kicker="DECISÃO COMERCIAL"
+        title="Comparar máquinas"
+        description="Selecione até 3 máquinas para ver lado a lado preços, entradas, parcelas e especificações."
+        action={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="button button-outline" onClick={() => navigate('/vitrine')}>
+              <Package size={15}/> Ver vitrine
+            </button>
+            {selected.length > 0 && (
+              <button className="button button-outline" onClick={() => setSelected([])}>
+                <X size={16} /> Limpar ({selected.length})
+              </button>
+            )}
+          </div>
+        }
+      />
+
+      {/* ========== SLOTS SELECIONADOS (fixos = 3 colunas, como se fosse "carrinho") ========== */}
+      <div style={{
+        display: 'grid', gap: 14, gridTemplateColumns: `repeat(${slots}, minmax(0, 1fr))`,
+        marginBottom: 22,
+      }}>
+        {Array.from({ length: slots }).map((_, i) => {
+          const m = current[i];
+          return (
+            <div key={i} style={{
+              background: m ? '#fff' : '#fbf7ee',
+              border: '1px dashed ' + (m ? '#e3dbc5' : '#d6c48a'),
+              borderRadius: 16, padding: 16, minHeight: 180,
+              display: 'flex', flexDirection: 'column',
+              position: 'relative',
+              boxShadow: m ? '0 1px 2px rgba(0,0,0,0.04)' : 'none',
+            }}>
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                marginBottom: 10,
+              }}>
+                <span style={{
+                  fontSize: 11, fontWeight: 800, letterSpacing: '.12em',
+                  color: m ? '#b8963f' : '#a39160',
+                }}>SLOT {i + 1}</span>
+                {m && (
+                  <button
+                    title="Remover da comparação"
+                    onClick={() => toggle(m.id)}
+                    style={{
+                      width: 28, height: 28, borderRadius: '50%',
+                      border: 'none', background: '#fef2f2', color: '#991b1b',
+                      cursor: 'pointer', display: 'grid', placeItems: 'center',
+                    }}
+                    onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fee2e2'; }}
+                    onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fef2f2'; }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              {m ? (
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <div style={{
+                    width: 58, height: 58, borderRadius: 12, overflow: 'hidden',
+                    background: 'linear-gradient(135deg, #fff4d6 0%, #f4e6b9 100%)',
+                    border: '1px solid #ede2c0', flexShrink: 0,
+                  }}>
+                    {m.photos?.[0]?.public_url || m.image ? (
+                      <img src={m.photos?.[0]?.public_url || m.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
+                        <Package size={22} style={{ color: '#b8963f' }} />
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, lineHeight: 1.15, color: '#1c1917' }}>
+                      {m.display_name}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#78716c', marginTop: 3 }}>
+                      {m.category || ''} · {m.year || ''}
+                    </div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: '#b8963f', marginTop: 6 }}>
+                      {money(m.value)}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{
+                  color: '#8b7f65', textAlign: 'center', margin: 'auto 0',
+                  display: 'grid', placeItems: 'center', gap: 6,
+                }}>
+                  <Grid2X2 size={26} style={{ opacity: 0.8 }} />
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>Vaga {i + 1}</div>
+                  <div style={{ fontSize: 11, color: '#a39160' }}>Selecione uma máquina abaixo</div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="compare-picker">
+        <div className="result-line">
+          <strong>{selected.length} de 3 selecionadas</strong>
+          <span>Escolha as fichas que deseja comparar</span>
+        </div>
+        <div className="search-box">
+          <Search size={17} />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar marca, modelo ou categoria..." />
+        </div>
+        <div className="choice-list">
+          {choices.length === 0 ? (
+            <div className="empty-state" style={{ padding: 36 }}>
+              <Search size={26} style={{ color: '#b8963f', marginBottom: 6 }} />
+              <h3>Nenhuma máquina encontrada</h3>
+              <p className="muted">Tente outro termo de busca.</p>
+            </div>
+          ) : choices.map(m => {
+            const isSel = selected.includes(m.id);
+            const roomLeft = selected.length < 3;
+            const disabled = !isSel && !roomLeft;
+            return (
+              <button
+                key={m.id}
+                className={isSel ? 'choice selected' : 'choice'}
+                onClick={() => toggle(m.id)}
+                disabled={disabled}
+                title={disabled ? 'Máximo de 3 selecionadas' : undefined}
+                style={disabled ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+              >
+                <span>{m.photos?.[0]?.public_url || m.image ? <img src={m.photos?.[0]?.public_url || m.image} alt="" /> : <Package size={18} />}</span>
+                <div style={{ textAlign: 'left', flex: 1 }}>
+                  <strong>{m.display_name}</strong>
+                  <small>{m.category} · {money(m.value)}</small>
+                </div>
+                {isSel && <Check size={16} />}
+                {!isSel && !roomLeft && <LockKeyhole size={14} />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ========== COMPARAÇÃO ABAIXO (mostra sempre que current.length >= 1 — mesmo 1 só) ========== */}
+      {current.length === 0 ? (
+        <div className="empty-state" style={{ marginTop: 18 }}>
+          <Grid2X2 size={34} />
+          <h3>Selecione pelo menos 1 máquina</h3>
+          <p>Os cards de comparação aparecem automaticamente aqui. Você pode comparar até 3 lado a lado.</p>
+        </div>
+      ) : (
+        <>
+          <div className="comparison-grid" style={{
+            gridTemplateColumns: `repeat(${Math.min(current.length, 3)}, minmax(0, 1fr))`,
+          }}>
+            {current.map(m => (
+              <article className="comparison-card" key={m.id}>
+                <div className="compare-image">
+                  {m.photos?.[0]?.public_url || m.image
+                    ? <img src={m.photos?.[0]?.public_url || m.image} alt={m.display_name} />
+                    : <ImageIcon size={30} />}
+                </div>
+                <span className="eyebrow gold">{m.brand || '-'}</span>
+                <h2 style={{ fontSize: 20, minHeight: 48 }}>{m.display_name}</h2>
+                <small>{m.category || ''}{(m.category && m.year) ? ' · ' : ''}{m.year || ''}</small>
+                <div className="compare-prices">
+                  <div><span>VALOR</span><strong>{money(m.value)}</strong></div>
+                  <div><span>ENTRADA</span><b>{money(m.entry)}</b></div>
+                  <div><span>PARCELA</span><b>{money(m.installment)}</b></div>
+                </div>
+                <div className="compare-specs">
+                  {allSpecs.length === 0 && (
+                    <div style={{
+                      display: 'grid', gap: 8, gridColumn: '1 / -1',
+                      fontSize: 13, color: '#57534e',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px dashed #f0e6c8' }}>
+                        <span style={{ fontWeight: 600 }}>Localização</span>
+                        <strong className={m.location ? '' : 'pending'}>{m.location || 'Em validação'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px dashed #f0e6c8' }}>
+                        <span style={{ fontWeight: 600 }}>Potência</span>
+                        <strong className={m.power ? '' : 'pending'}>{m.power || 'Em validação'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px dashed #f0e6c8' }}>
+                        <span style={{ fontWeight: 600 }}>Peso operacional</span>
+                        <strong className={m.weight ? '' : 'pending'}>{m.weight || 'Em validação'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px dashed #f0e6c8' }}>
+                        <span style={{ fontWeight: 600 }}>Horas</span>
+                        <strong className={m.hours ? '' : 'pending'}>{m.hours || 'Em validação'}</strong>
+                      </div>
+                    </div>
+                  )}
+                  {allSpecs.map(spec => (
+                    <div key={spec}>
+                      <span>{spec}</span>
+                      <strong className={m.specs[spec] ? '' : 'pending'}>{m.specs[spec] || 'Em validação'}</strong>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  className="button button-outline full"
+                  onClick={() => navigate(`/maquina/${m.id}`)}
+                >
+                  Ver detalhes <ChevronRight size={15} />
+                </button>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
 
 function AdminDashboard({ machines }: { machines: Machine[] }) { const navigate = useNavigate(); const pending = machines.reduce((sum, m) => sum + Object.values(m.specs).filter(Boolean).length < 6 ? 1 : 0, 0); const categories = [...new Set(machines.map(m => m.category))]; const brands = [...new Set(machines.map(m => m.brand))]; return <><PageHeader kicker="VISÃO GERAL" title="Bom dia, sua operação está em movimento" description="Acompanhe a saúde do catálogo e os pontos que precisam da sua atenção." action={<button className="button button-primary" onClick={() => navigate('/admin/maquinas/nova')}><Plus size={17} /> Nova máquina</button>} /><div className="stat-grid"><StatCard label="Total de máquinas" value={machines.length} detail="+12% este mês" icon={Package} accent /><StatCard label="Marcas cadastradas" value={brands.length} icon={Tags} /><StatCard label="Categorias usadas" value={categories.length} icon={Grid2X2} /><StatCard label="Fichas completas" value={Math.max(0, machines.length - pending)} detail="de 100% preenchidas" icon={Check} /><StatCard label="Total de fotos" value={machines.filter(m => m.image).length} icon={ImageIcon} /><StatCard label="Sem foto" value={machines.filter(m => !m.image).length} icon={ImageIcon} /></div><div className="dashboard-grid"><section className="panel"><div className="panel-heading"><div><span className="eyebrow gold">ATENÇÃO NECESSÁRIA</span><h2>Qualidade do catálogo</h2></div><span className="pending-number">{pending} pendências</span></div><div className="quality-row"><div className="quality-ring"><strong>{Math.round(((machines.length - pending) / Math.max(machines.length, 1)) * 100)}%</strong><span>completo</span></div><div><h3>Fichas prontas para venda</h3><p className="muted">Revise os campos técnicos para garantir ofertas mais confiáveis.</p><button className="text-button" onClick={() => navigate('/admin/auditoria')}>Abrir auditoria técnica <ChevronRight size={14} /></button></div></div></section><section className="panel"><div className="panel-heading"><div><span className="eyebrow gold">DISTRIBUIÇÃO</span><h2>Máquinas por categoria</h2></div><BarChart3 size={19} /></div>{categories.map(cat => { const count = machines.filter(m => m.category === cat).length; return <button className="bar-row" key={cat} onClick={() => navigate('/admin/maquinas')}><div><span>{cat}</span><b>{count}</b></div><i><em style={{ width: `${(count / machines.length) * 100}%` }} /></i></button> })}</section></div><section className="panel recent-panel"><div className="panel-heading"><div><span className="eyebrow gold">ATIVIDADE</span><h2>Últimos cadastros</h2></div><Link className="text-button" to="/admin/maquinas">Ver todas</Link></div><div className="recent-list">{machines.slice(0, 5).map(m => <button key={m.id} className="recent-item" onClick={() => navigate(`/admin/maquinas/${m.id}`)}><div className="recent-thumb">{m.image ? <img src={m.image} alt="" /> : <Package size={17} />}</div><div><strong>{m.display_name}</strong><small>{m.brand} · {m.category}</small></div><span>{money(m.value)}</span><ChevronRight size={16} /></button>)}</div></section></>; }
 
