@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { BarChart3, Bell, Building2, Calculator, Check, ChevronRight, Clipboard, Database, Eye, EyeOff, FileText, Grid2X2, Image as ImageIcon, LayoutDashboard, LockKeyhole, LogOut, Menu, Package, Pencil, Plus, Save, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Tags, Trash2, Users, X, Zap } from 'lucide-react';
+import { ArrowLeft, BarChart3, Bell, Building2, Calculator, Check, ChevronRight, Clipboard, Database, Eye, EyeOff, FileText, Grid2X2, Image as ImageIcon, LayoutDashboard, LockKeyhole, LogOut, Menu, Package, Pencil, Plus, Save, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Tags, Trash2, Users, X, Zap } from 'lucide-react';
 
 type Role = 'admin' | 'seller';
 type Profile = { id: string; full_name: string; email: string; role: Role; is_active: boolean };
@@ -363,24 +363,25 @@ function Compare({ machines }: { machines: Machine[] }) {
   const allSpecs = [...new Set(current.flatMap(m => Object.keys(m.specs)))].sort();
   const slots = 3;
   return (
-    <>
-      <PageHeader
-        kicker="DECISÃO COMERCIAL"
-        title="Comparar máquinas"
-        description="Selecione até 3 máquinas para ver lado a lado preços, entradas, parcelas e especificações."
-        action={
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="button button-outline" onClick={() => navigate('/vitrine')}>
-              <Package size={15}/> Ver vitrine
-            </button>
-            {selected.length > 0 && (
-              <button className="button button-outline" onClick={() => setSelected([])}>
-                <X size={16} /> Limpar ({selected.length})
+    <div style={{ minHeight: '100vh', background: '#f5f2ec' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '26px 22px 60px' }}>
+        <PageHeader
+          kicker="DECISÃO COMERCIAL"
+          title="Comparar máquinas"
+          description="Selecione até 3 máquinas para ver lado a lado preços, entradas, parcelas e especificações."
+          action={
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="button button-outline" onClick={() => navigate('/')}>
+                <ArrowLeft size={15}/> Voltar ao catálogo
               </button>
-            )}
-          </div>
-        }
-      />
+              {selected.length > 0 && (
+                <button className="button button-outline" onClick={() => setSelected([])}>
+                  <X size={16} /> Limpar ({selected.length})
+                </button>
+              )}
+            </div>
+          }
+        />
 
       {/* ========== SLOTS SELECIONADOS (fixos = 3 colunas, como se fosse "carrinho") ========== */}
       <div style={{
@@ -575,7 +576,8 @@ function Compare({ machines }: { machines: Machine[] }) {
           </div>
         </>
       )}
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -605,13 +607,28 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
   const [newBrandName, setNewBrandName] = useState('');
   const [createBrandBusy, setCreateBrandBusy] = useState(false);
   useEffect(() => {
+    let alive = true;
     (async () => {
       setBrandErr(null);
       try {
         const r = await supabase.from('brands').select('id,name,is_active').eq('is_active', true).order('name');
         if (r.error) throw new Error(r.error.message || String(r.error));
-        if (r.data) setBrandsList(r.data as BrandRow[]);
+        if (r.data && alive) {
+          const list = r.data as BrandRow[];
+          setBrandsList(list);
+          // ===== DINÂMICO: se é NOVA máquina (sem existing) e ainda não tem brand selecionado
+          //   seleciona AUTOMATICAMENTE a 1ª marca cadastrada.
+          if (!existing && list.length > 0) {
+            setForm(prevForm => {
+              if (!prevForm.brand || prevForm.brand.trim().length === 0) {
+                return { ...prevForm, brand: list[0].name };
+              }
+              return prevForm;
+            });
+          }
+        }
       } catch (e) {
+        if (!alive) return;
         setBrandErr(e instanceof Error ? e.message : String(e));
         // Fallback: extrai marcas das próprias máquinas para o select mesmo sem tabela brands
         const seen = new Set<string>();
@@ -625,8 +642,12 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
         }
         fb.sort((a, b) => a.name.localeCompare(b.name));
         setBrandsList(fb);
+        if (!existing && fb.length > 0) {
+          setForm(prevForm => !prevForm.brand ? { ...prevForm, brand: fb[0].name } : prevForm);
+        }
       }
     })();
+    return () => { alive = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existing?.id]);
 
@@ -666,8 +687,8 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
     }
   };
 
-  const defaultCat = categoriesList[0]?.name || 'ESCAVADEIRA';
-  const defaultBrand = brandsList[0]?.name || '';
+  const defaultCat = categoriesList[0]?.name || existing?.category || 'ESCAVADEIRA';
+  const defaultBrand = existing?.brand ? existing.brand : (brandsList[0]?.name || '');
   const [form, setForm] = useState<Machine>(
     existing
       ? { ...existing, description: existing.description ?? '', notes: existing.notes ?? '' }
@@ -2019,14 +2040,12 @@ function Brands({ machines }: { machines: Machine[] }) {
             const letter = (item.name || '?').trim().charAt(0).toUpperCase();
             return (
               <div className="brand-card" key={item.id} style={{ position: 'relative' }}>
-                {/* ===== Ícones discretos canto superior direito ===== */}
+                {/* ===== Ícones EDITAR (caneta) + DELETAR (lixeira): SEMPRE VISÍVEIS, ACIMA DO CONTADOR ===== */}
+                {/* Lado direito do topo do card, acima do número de quantidade de máquinas */}
                 <div style={{
-                  position: 'absolute', top: 10, right: 10,
+                  position: 'absolute', top: 14, right: 18,
                   display: 'flex', gap: 6, zIndex: 5,
-                  opacity: 0, transition: 'opacity .15s ease-in-out',
                 }}
-                  onMouseOver={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = '1'; }}
-                  onMouseOut={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = item.is_active ? '0' : '1'; }}
                   aria-hidden={!!loadErr}
                 >
                   {/* Lápis = editar */}
@@ -2036,13 +2055,13 @@ function Brands({ machines }: { machines: Machine[] }) {
                     title="Editar marca"
                     onClick={() => openEdit(item)}
                     style={{
-                      width: 30, height: 30, borderRadius: 8, border: 'none',
-                      background: '#fef9ea', color: '#92400e', cursor: 'pointer',
+                      width: 30, height: 30, borderRadius: 8, border: '1px solid #f0e6c9',
+                      background: '#fff', color: '#92400e', cursor: 'pointer',
                       display: 'grid', placeItems: 'center',
                       boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
                     }}
-                    onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fde68a'; }}
-                    onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fef9ea'; }}
+                    onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fde68a'; (e.currentTarget as HTMLButtonElement).style.borderColor = '#e0c97a'; }}
+                    onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fff'; (e.currentTarget as HTMLButtonElement).style.borderColor = '#f0e6c9'; }}
                   >
                     <Pencil size={14} />
                   </button>
@@ -2053,13 +2072,13 @@ function Brands({ machines }: { machines: Machine[] }) {
                     title="Excluir marca"
                     onClick={() => remove(item)}
                     style={{
-                      width: 30, height: 30, borderRadius: 8, border: 'none',
-                      background: '#fef2f2', color: '#991b1b', cursor: 'pointer',
+                      width: 30, height: 30, borderRadius: 8, border: '1px solid #f5d2c9',
+                      background: '#fff', color: '#991b1b', cursor: 'pointer',
                       display: 'grid', placeItems: 'center',
                       boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
                     }}
-                    onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fecaca'; }}
-                    onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fef2f2'; }}
+                    onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fecaca'; (e.currentTarget as HTMLButtonElement).style.borderColor = '#fca5a5'; }}
+                    onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fff'; (e.currentTarget as HTMLButtonElement).style.borderColor = '#f5d2c9'; }}
                   >
                     <Trash2 size={14} />
                   </button>
@@ -2068,10 +2087,14 @@ function Brands({ machines }: { machines: Machine[] }) {
                 <div className="brand-card-top">
                   <div className="brand-symbol">{letter}</div>
                   <div style={{
-                    display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2,
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6,
                     marginLeft: 'auto', textAlign: 'right',
+                    /*  Espaço para os ícones não sobrepor o número
+                        (largura 2 ícones 30 + gap 6 + margem 18 direita) */
+                    paddingTop: 36,
+                    minWidth: 106,
                   }}>
-                    <strong style={{ fontSize: 22 }}>{qtd}</strong>
+                    <strong style={{ fontSize: 22, lineHeight: 1 }}>{qtd}</strong>
                     <span style={{
                       fontSize: 11, letterSpacing: '.06em', color: '#78716c',
                       fontWeight: 600,
@@ -2414,6 +2437,17 @@ function PublicCatalog() {
   }, []);
 
   // ============ Filtros ============
+  // ============ Helper: resolve selectedBrand -> marca (name trim.upper normalizado)
+  const getBrandMatchUpper = (sel: string | null): string | null => {
+    if (!sel) return null;
+    // Caso 1: selectedBrand é um UUID (id da tabela brands) ou um name — tenta achar a linha no chips brands[]
+    const row = brands.find(b => b.id === sel || b.name.toLowerCase() === sel.toLowerCase());
+    if (row) return row.name.trim().toUpperCase();
+    // Caso 2: fallback (modo compatível sem tabela brands): é o próprio nome passado
+    return sel.trim().toUpperCase();
+  };
+  const brandMatchUpper = getBrandMatchUpper(selectedBrand);
+
   const filtered = machines.filter(m => {
     const hay = `${m.display_name} ${m.brand} ${m.model} ${m.category} ${m.location}`.toLowerCase();
     if (query.trim() && !hay.includes(query.toLowerCase())) return false;
@@ -2425,9 +2459,11 @@ function PublicCatalog() {
       );
       if (!match) return false;
     }
-    if (selectedBrand) {
-      const match = m.brand && (m.brand.toLowerCase() === selectedBrand.toLowerCase() || String(m.brand) === selectedBrand);
-      if (!match) return false;
+    if (brandMatchUpper) {
+      if (!m.brand) return false;
+      // MESMA lógica do count dos chips: trim().toUpperCase() ===
+      const mb = m.brand.trim().toUpperCase();
+      if (mb !== brandMatchUpper) return false;
     }
     return true;
   });
@@ -2536,7 +2572,7 @@ function PublicCatalog() {
               Catálogo de <span style={{ color: '#b8963f' }}>Máquinas</span>
             </h1>
             <p className="muted" style={{ fontSize: 15, maxWidth: 520, marginBottom: 20 }}>
-              Consulta rápida para SDRs e vendedores do time Eixo — modelos, especificações, valores, entradas e parcelas durante o atendimento.
+              Para cada trabalho, o máquinario certo— modelos, especificações e condições de compra.
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <button className="button button-primary" onClick={() => {
@@ -3032,24 +3068,23 @@ function App() {
     );
   }
 
-  // Usuário LOGADO: Home / e /vitrine sem sidebar; todo o resto (catalogo, admin, comparar, maquina, etc) DENTRO do AppShell com sidebar.
+  // Usuário LOGADO: Home / e /vitrine e /comparar SEM sidebar; todo o resto DENTRO do AppShell.
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<PublicCatalog />} />
         <Route path="/vitrine" element={<PublicCatalog />} />
+        <Route path="/maquina/:id" element={<MachineDetail machines={machines} />} />
+        <Route path="/comparar" element={<Compare machines={machines} />} />
         <Route
           path="*"
           element={
             <AppShell profile={profile} onLogout={logout}>
               <Routes>
                 <Route path="/catalogo" element={<Catalog machines={machines} />} />
-                <Route path="/maquina/:id" element={<MachineDetail machines={machines} />} />
-                <Route path="/comparar" element={<Compare machines={machines} />} />
                 <Route path="/propostas" element={<Proposals />} />
                 <Route path="/perfil" element={<ProfilePage profile={profile} onUpdate={setProfile} />} />
                 <Route path="/login" element={<Navigate to="/admin" replace />} />
-                <Route path="/vitrine" element={<Navigate to="/vitrine" replace />} />
                 <Route path="/admin" element={profile.role === 'admin' ? <AdminDashboard machines={machines} /> : <Navigate to="/catalogo" replace />} />
                 <Route path="/admin/maquinas" element={profile.role === 'admin' ? <AdminMachines machines={machines} setMachines={setMachines} /> : <Navigate to="/catalogo" replace />} />
                 <Route path="/admin/maquinas/:id" element={profile.role === 'admin' ? <MachineForm machines={machines} setMachines={setMachines} /> : <Navigate to="/catalogo" replace />} />
