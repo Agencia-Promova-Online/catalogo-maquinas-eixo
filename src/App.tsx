@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { BarChart3, Bell, Building2, Calculator, Check, ChevronRight, Clipboard, Database, FileText, Grid2X2, Image as ImageIcon, LayoutDashboard, LockKeyhole, LogOut, Menu, Package, Plus, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Tags, Trash2, Users, X, Zap } from 'lucide-react';
+import { BarChart3, Bell, Building2, Calculator, Check, ChevronRight, Clipboard, Database, Eye, EyeOff, FileText, Grid2X2, Image as ImageIcon, LayoutDashboard, LockKeyhole, LogOut, Menu, Package, Pencil, Plus, Save, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Tags, Trash2, Users, X, Zap } from 'lucide-react';
 
 type Role = 'admin' | 'seller';
 type Profile = { id: string; full_name: string; email: string; role: Role; is_active: boolean };
@@ -591,17 +591,89 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
   const [categoriesList, setCategoriesList] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     (async () => {
-      const r = await supabase.from('categories').select('id,name').eq('is_visible', true).order('name');
-      if (r.data) setCategoriesList(r.data as Array<{ id: string; name: string }>);
+      try {
+        const r = await supabase.from('categories').select('id,name').eq('is_visible', true).order('name');
+        if (r.data) setCategoriesList(r.data as Array<{ id: string; name: string }>);
+      } catch { /* ignore */ }
     })();
   }, []);
 
+  type BrandRow = { id: string; name: string; is_active: boolean };
+  const [brandsList, setBrandsList] = useState<BrandRow[]>([]);
+  const [brandErr, setBrandErr] = useState<string | null>(null);
+  const [createBrandOpen, setCreateBrandOpen] = useState(false);
+  const [newBrandName, setNewBrandName] = useState('');
+  const [createBrandBusy, setCreateBrandBusy] = useState(false);
+  useEffect(() => {
+    (async () => {
+      setBrandErr(null);
+      try {
+        const r = await supabase.from('brands').select('id,name,is_active').eq('is_active', true).order('name');
+        if (r.error) throw new Error(r.error.message || String(r.error));
+        if (r.data) setBrandsList(r.data as BrandRow[]);
+      } catch (e) {
+        setBrandErr(e instanceof Error ? e.message : String(e));
+        // Fallback: extrai marcas das próprias máquinas para o select mesmo sem tabela brands
+        const seen = new Set<string>();
+        const fb: BrandRow[] = [];
+        for (const m of machines) {
+          if (!m.brand || m.brand.trim().length < 2) continue;
+          const n = m.brand.trim().toUpperCase();
+          if (seen.has(n)) continue;
+          seen.add(n);
+          fb.push({ id: `fb-${n}`, name: n, is_active: true });
+        }
+        fb.sort((a, b) => a.name.localeCompare(b.name));
+        setBrandsList(fb);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existing?.id]);
+
+  const refreshBrands = async () => {
+    try {
+      const r = await supabase.from('brands').select('id,name,is_active').eq('is_active', true).order('name');
+      if (r.data) { setBrandsList(r.data as BrandRow[]); setBrandErr(null); }
+    } catch { /* ignore */ }
+  };
+
+  const saveNewBrandInline = async () => {
+    const next = newBrandName.trim().toUpperCase();
+    if (next.length < 2) return;
+    if (brandsList.some(b => b.name.toUpperCase() === next)) {
+      setForm(p => ({ ...p, brand: next }));
+      setCreateBrandOpen(false);
+      setNewBrandName('');
+      return;
+    }
+    setCreateBrandBusy(true);
+    try {
+      const slug = next.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const r = await supabase.from('brands').insert([{ name: next, slug, accent_color: '#B8963F', is_active: true }]).select('id,name,is_active').maybeSingle();
+      if (r.error) throw new Error(r.error.message || String(r.error));
+      setForm(p => ({ ...p, brand: next }));
+      setCreateBrandOpen(false);
+      setNewBrandName('');
+      await refreshBrands();
+    } catch (e) {
+      setBrandErr(e instanceof Error ? e.message : String(e));
+      // fallback: escreve direto como texto (compat)
+      setForm(p => ({ ...p, brand: next }));
+      setCreateBrandOpen(false);
+      setNewBrandName('');
+    } finally {
+      setCreateBrandBusy(false);
+    }
+  };
+
   const defaultCat = categoriesList[0]?.name || 'ESCAVADEIRA';
+  const defaultBrand = brandsList[0]?.name || '';
   const [form, setForm] = useState<Machine>(
     existing
       ? { ...existing, description: existing.description ?? '', notes: existing.notes ?? '' }
       : {
-          id: `m${Date.now()}`, internal_code: '', brand: '', model: '', display_name: '',
+          id: `m${Date.now()}`, internal_code: '',
+          brand: defaultBrand, model: '', display_name: '',
           category: defaultCat, value: 0, entry: 0, installment: 0,
           year: new Date().getFullYear(), status: 'available', power: '', weight: '', hours: '',
           location: '', description: '', notes: '', applications: [], specs: {}, photos: [],
@@ -1029,7 +1101,85 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
                 </select>
               </label>
               <label>Marca *
-                <input value={form.brand} onChange={e => field('brand', e.target.value.toUpperCase())} required placeholder="Ex: Volvo" />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1 }}>
+                    {brandsList.length === 0 || brandErr ? (
+                      // Fallback para input text caso a tabela brands ainda não exista / RLS bloqueie
+                      <input
+                        value={form.brand}
+                        onChange={e => field('brand', e.target.value.toUpperCase())}
+                        required
+                        placeholder={brandErr ? 'Digite a marca (tabela brands indisponível)' : 'Carregando marcas... digite aqui'}
+                      />
+                    ) : (
+                      <select
+                        value={form.brand}
+                        onChange={e => field('brand', e.target.value)}
+                        required
+                      >
+                        <option value="">Selecione uma marca</option>
+                        {brandsList.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                        {/* Se a marca já existente na ficha não estiver na lista ativa, exibe como opção para não apagar dados */}
+                        {form.brand && !brandsList.some(b => b.name.toUpperCase() === (form.brand || '').toUpperCase()) && (
+                          <option value={form.brand}>{form.brand} <span style={{ color: '#a8a29e' }}>(marca atual)</span></option>
+                        )}
+                      </select>
+                    )}
+                  </div>
+                  {!brandErr && (
+                    <button
+                      type="button"
+                      onClick={() => setCreateBrandOpen(o => !o)}
+                      title="Cadastrar nova marca"
+                      className="button button-outline"
+                      style={{
+                        padding: '10px 12px', alignSelf: 'stretch',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {createBrandOpen ? <X size={16} /> : <Plus size={16} />}
+                      <span style={{ marginLeft: 4 }}>{createBrandOpen ? 'Fechar' : 'Nova'}</span>
+                    </button>
+                  )}
+                </div>
+                {createBrandOpen && !brandErr && (
+                  <div style={{
+                    marginTop: 10, padding: 14, border: '1px dashed #e0c97a',
+                    borderRadius: 14, background: '#fefbf0',
+                  }}>
+                    <div style={{
+                      fontSize: 12, fontWeight: 800, letterSpacing: '.1em', color: '#b8963f',
+                      marginBottom: 8,
+                    }}>
+                      + NOVA MARCA (será cadastrada e selecionada automaticamente)
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="search-box" style={{ flex: 1 }}>
+                        <Tags size={15} />
+                        <input
+                          autoFocus
+                          value={newBrandName}
+                          onChange={e => setNewBrandName(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), saveNewBrandInline())}
+                          placeholder="Nome da marca (ex: SANY)"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        onClick={saveNewBrandInline}
+                        disabled={createBrandBusy || newBrandName.trim().length < 2}
+                      >
+                        {createBrandBusy ? 'Salvando...' : <><Save size={15}/> Salvar</>}
+                      </button>
+                    </div>
+                    {brandErr && (
+                      <p className="muted" style={{ marginTop: 8, color: '#b45309', fontSize: 12 }}>
+                        Aviso: {brandErr}. A marca será usada no cadastro desta máquina, mas rodar a migration de brands é recomendado para ela aparecer em outras telas.
+                      </p>
+                    )}
+                  </div>
+                )}
               </label>
               <label>Modelo *
                 <input value={form.model} onChange={e => field('model', e.target.value)} required placeholder="Ex: EC140" />
@@ -1718,7 +1868,331 @@ function Categories() {
     </AdminSimple>
   );
 }
-function Brands({ machines }: { machines: Machine[] }) { const grouped = Object.entries(machines.reduce<Record<string, string[]>>((acc, m) => { (acc[m.brand] ||= []).push(m.model); return acc; }, {})); return <AdminSimple title="Marcas" kicker="IDENTIDADE COMERCIAL" description="Marcas identificadas automaticamente a partir das máquinas cadastradas."><div className="brand-grid">{grouped.map(([brand, models]) => <div className="brand-card" key={brand}><div className="brand-card-top"><div className="brand-symbol">{brand.slice(0, 1)}</div><strong>{models.length}</strong></div><h2>{brand}</h2><p>{models.join(' · ')}</p><button className="text-button">Ver máquinas <ChevronRight size={14} /></button></div>)}</div></AdminSimple>; }
+function Brands({ machines }: { machines: Machine[] }) {
+  type Row = { id: string; name: string; is_active: boolean; accent_color?: string | null; slug?: string | null };
+  const [items, setItems] = useState<Row[]>([]);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Row | null>(null);
+  const [editName, setEditName] = useState('');
+
+  const fetchItems = async () => {
+    setLoadErr(null);
+    try {
+      const r = await supabase.from('brands').select('id,name,is_active,accent_color,slug').order('name');
+      if (r.error) throw new Error(r.error.message || String(r.error));
+      if (r.data) setItems(r.data as Row[]);
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+      // fallback: extrai marcas das próprias máquinas como placeholder
+      const fallbackMap = new Map<string, number>();
+      for (const m of machines) {
+        if (!m.brand || m.brand.trim().length < 2) continue;
+        const k = m.brand.trim().toUpperCase();
+        fallbackMap.set(k, (fallbackMap.get(k) || 0) + 1);
+      }
+      const fb: Row[] = Array.from(fallbackMap.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([n], i) => ({
+          id: `fb-${i}-${n.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+          name: n,
+          is_active: true,
+          accent_color: '#B8963F',
+          slug: n.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        }));
+      setItems(fb);
+    }
+  };
+
+  useEffect(() => { fetchItems(); }, []);
+
+  const count = (rowName: string) => machines.filter(m => (m.brand || '').trim().toUpperCase() === rowName.toUpperCase()).length;
+
+  const add = async () => {
+    const next = name.trim().toUpperCase();
+    if (next.length < 2 || items.some(i => i.name.toUpperCase() === next)) return;
+    setBusy(true);
+    try {
+      const slug = next.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const r = await supabase.from('brands').insert([{ name: next, slug, accent_color: '#B8963F', is_active: true }]);
+      if (r.error) throw new Error(r.error.message || String(r.error));
+      setName('');
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      await fetchItems();
+    }
+  };
+
+  const openEdit = (row: Row) => {
+    setEditing(row);
+    setEditName(row.name);
+  };
+  const closeEdit = () => { setEditing(null); setEditName(''); };
+  const saveEdit = async () => {
+    if (!editing) return;
+    const next = editName.trim().toUpperCase();
+    if (next.length < 2) return;
+    if (next === editing.name) { closeEdit(); return; }
+    if (items.some(i => i.id !== editing.id && i.name.toUpperCase() === next)) return;
+    setBusy(true);
+    try {
+      const slug = next.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const r = await supabase.from('brands').update({ name: next, slug }).eq('id', editing.id);
+      if (r.error) throw new Error(r.error.message || String(r.error));
+      closeEdit();
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      await fetchItems();
+    }
+  };
+
+  const toggleActive = async (row: Row) => {
+    setBusy(true);
+    try {
+      const r = await supabase.from('brands').update({ is_active: !row.is_active }).eq('id', row.id);
+      if (r.error) throw new Error(r.error.message || String(r.error));
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      await fetchItems();
+    }
+  };
+
+  const remove = async (row: Row) => {
+    const qtd = count(row.name);
+    const msg = qtd > 0
+      ? `A marca "${row.name}" tem ${qtd} máquina(s) cadastrada(s). Ao excluir a marca, os nomes das máquinas NÃO são apagados (elas permanecem com o nome atual). Deseja realmente excluir a marca do cadastro?`
+      : `Excluir a marca "${row.name}" do cadastro?`;
+    if (!window.confirm(msg)) return;
+    setBusy(true);
+    try {
+      const r = await supabase.from('brands').delete().eq('id', row.id);
+      if (r.error) throw new Error(r.error.message || String(r.error));
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      await fetchItems();
+    }
+  };
+
+  return (
+    <>
+      <AdminSimple
+        title="Marcas"
+        kicker="IDENTIDADE COMERCIAL · CATÁLOGO"
+        description="Cadastre as marcas usadas no catálogo. Ao criar ou editar uma máquina, a marca é escolhida em uma lista. Renomear uma marca reflete automaticamente em TODAS as máquinas correspondentes."
+      >
+        {loadErr && (
+          <div className="form-error" style={{ marginTop: 0, marginBottom: 14 }}>
+            ⚠️ Aviso: {loadErr}. Cadastre/rode a migration <code style={{ color: '#b45309' }}>20261009183000_brands_tabela_crud_seed_trigger.sql</code> para ativar CRUD em tabela. Enquanto isso, as marcas estão sendo extraídas das máquinas já cadastradas (modo leitura).
+          </div>
+        )}
+
+        {/* Barra cadastrar nova marca */}
+        <div className="inline-form">
+          <div className="search-box">
+            <Plus size={18} />
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && add()}
+              placeholder="Nome da nova marca (ex: Caterpillar, JCB, Volvo)"
+              disabled={!!loadErr || busy}
+            />
+          </div>
+          <button className="button button-primary" onClick={add} disabled={busy || !!loadErr}>
+            {busy ? 'Salvando...' : 'Adicionar marca'}
+          </button>
+        </div>
+
+        {/* Grid de cards (estilo brand-card com ícones editar/excluir discretos no topo) */}
+        <div className="brand-grid" style={{ marginTop: 18 }}>
+          {items.map(item => {
+            const qtd = count(item.name);
+            const letter = (item.name || '?').trim().charAt(0).toUpperCase();
+            return (
+              <div className="brand-card" key={item.id} style={{ position: 'relative' }}>
+                {/* ===== Ícones discretos canto superior direito ===== */}
+                <div style={{
+                  position: 'absolute', top: 10, right: 10,
+                  display: 'flex', gap: 6, zIndex: 5,
+                  opacity: 0, transition: 'opacity .15s ease-in-out',
+                }}
+                  onMouseOver={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = '1'; }}
+                  onMouseOut={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = item.is_active ? '0' : '1'; }}
+                  aria-hidden={!!loadErr}
+                >
+                  {/* Lápis = editar */}
+                  <button
+                    type="button"
+                    disabled={busy || !!loadErr}
+                    title="Editar marca"
+                    onClick={() => openEdit(item)}
+                    style={{
+                      width: 30, height: 30, borderRadius: 8, border: 'none',
+                      background: '#fef9ea', color: '#92400e', cursor: 'pointer',
+                      display: 'grid', placeItems: 'center',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                    }}
+                    onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fde68a'; }}
+                    onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fef9ea'; }}
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  {/* Lixeira = excluir */}
+                  <button
+                    type="button"
+                    disabled={busy || !!loadErr}
+                    title="Excluir marca"
+                    onClick={() => remove(item)}
+                    style={{
+                      width: 30, height: 30, borderRadius: 8, border: 'none',
+                      background: '#fef2f2', color: '#991b1b', cursor: 'pointer',
+                      display: 'grid', placeItems: 'center',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                    }}
+                    onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fecaca'; }}
+                    onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#fef2f2'; }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+
+                <div className="brand-card-top">
+                  <div className="brand-symbol">{letter}</div>
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2,
+                    marginLeft: 'auto', textAlign: 'right',
+                  }}>
+                    <strong style={{ fontSize: 22 }}>{qtd}</strong>
+                    <span style={{
+                      fontSize: 11, letterSpacing: '.06em', color: '#78716c',
+                      fontWeight: 600,
+                    }}>{qtd === 1 ? 'máquina' : 'máquinas'}</span>
+                  </div>
+                </div>
+
+                <h2 style={{
+                  paddingTop: 10, opacity: item.is_active ? 1 : 0.5,
+                  textDecoration: item.is_active ? 'none' : 'line-through',
+                }}>
+                  {item.name}
+                </h2>
+                <p style={{ color: item.is_active ? '#78716c' : '#a8a29e' }}>
+                  {item.is_active
+                    ? (qtd > 0 ? `${qtd} modelo(s) · ativa no catálogo` : 'Nenhum modelo cadastrado')
+                    : 'Marca inativa (oculta dos filtros)'}
+                </p>
+
+                <div style={{
+                  marginTop: 12, display: 'flex', alignItems: 'center',
+                  justifyContent: 'space-between', gap: 8, flexWrap: 'wrap',
+                }}>
+                  <button className="text-button"
+                    onClick={() => toggleActive(item)}
+                    disabled={busy || !!loadErr}
+                    style={{ textDecoration: 'none' }}
+                  >
+                    {item.is_active ? <> <EyeOff size={13}/> Desativar</> : <> <Eye size={13}/> Reativar</>}
+                  </button>
+
+                  <button className="text-button"
+                    onClick={() => openEdit(item)}
+                    disabled={busy || !!loadErr}
+                  >
+                    Editar <ChevronRight size={14}/>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {items.length === 0 && (
+            <div className="empty-state" style={{ gridColumn: '1 / -1' }}>
+              <Database size={30} />
+              <h3>Nenhuma marca cadastrada</h3>
+              <p>Cadastre a primeira marca acima. Ao salvar, ela aparecerá aqui como card.</p>
+            </div>
+          )}
+        </div>
+      </AdminSimple>
+
+      {/* ===== Modal Editar Marca ===== */}
+      {editing && (
+        <div className="modal-backdrop" onClick={closeEdit}>
+          <form
+            className="zoom-modal"
+            style={{ width: 440, maxWidth: '92vw' }}
+            onClick={e => e.stopPropagation()}
+            onSubmit={(e) => { e.preventDefault(); saveEdit(); }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <span className="eyebrow gold">EDITAR MARCA</span>
+                <h2 style={{ margin: '4px 0 0' }}>{editing.name}</h2>
+                <p className="muted" style={{ marginTop: 6, fontSize: 13 }}>
+                  Atualmente com {count(editing.name)} máquina(s). Ao renomear, todas as máquinas recebem o novo nome automaticamente.
+                </p>
+              </div>
+              <button type="button" className="modal-close" onClick={closeEdit}><X size={18}/></button>
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <label style={{
+                fontSize: 13, color: '#57534e', fontWeight: 600,
+                display: 'block', marginBottom: 6,
+              }}>
+                Nome da marca *
+                <input
+                  style={{ marginTop: 6 }}
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  placeholder="Ex: Caterpillar"
+                  required
+                  autoFocus
+                />
+              </label>
+              <label style={{
+                fontSize: 13, color: '#57534e', fontWeight: 600,
+                display: 'block', marginTop: 12, marginBottom: 6,
+              }}>
+                Situação
+                <select
+                  style={{ marginTop: 6 }}
+                  value={editing.is_active ? '1' : '0'}
+                  onChange={(e) => {
+                    const want = e.target.value === '1';
+                    if (want !== editing.is_active) {
+                      void toggleActive({ ...editing, is_active: want });
+                      setEditing(p => p ? { ...p, is_active: want } : p);
+                    }
+                  }}
+                >
+                  <option value="1">Ativa (aparece nos filtros e cadastro)</option>
+                  <option value="0">Inativa (oculta de filtros e cadastro)</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button type="button" className="button button-outline" onClick={closeEdit} disabled={busy}>
+                Cancelar
+              </button>
+              <button type="submit" className="button button-primary" style={{ marginLeft: 'auto' }} disabled={busy}>
+                {busy ? 'Salvando...' : <><Save size={15}/> Salvar alterações</>}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
 function Proposals() { const [brands] = useState(demoBrands); const [segments] = useState(demoSegments); const [brand, setBrand] = useState(brands[0].id); const [segment, setSegment] = useState(segments[0].id); const [client, setClient] = useState(''); const [credit, setCredit] = useState(''); const [entry, setEntry] = useState(''); const [installment, setInstallment] = useState(''); const [term, setTerm] = useState('60'); const [generated, setGenerated] = useState(false); const chosenSegment = segments.find(s => s.id === segment)!; const chosenBrand = brands.find(b => b.id === brand)!; const submit = (e: FormEvent) => { e.preventDefault(); if (!client || !credit || !installment) return; setGenerated(true); }; return <><PageHeader kicker="PROPOSTAS COMERCIAIS" title="Gerar uma proposta" description="Preencha apenas os dados do negócio. As taxas oficiais entram automaticamente." action={<Link to="/propostas/historico" className="button button-outline"><FileText size={16} /> Histórico</Link>} /><div className="proposal-layout"><form className="proposal-form" onSubmit={submit}><section className="form-card"><div className="form-card-heading"><div><span className="eyebrow gold">01 · CONFIGURAÇÃO</span><h2>Escolha a operação</h2></div><Calculator size={20} /></div><div className="form-grid"><label>Marca<select value={brand} onChange={e => setBrand(e.target.value)}>{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label><label>Segmento<select value={segment} onChange={e => setSegment(e.target.value)}>{segments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label></div><div className="locked-rates"><div className="locked-heading"><LockKeyhole size={16} /><strong>Taxas oficiais da operação</strong><span>Definido pela administração</span></div><div className="rate-grid"><div><small>Administração</small><strong>18,00%</strong></div><div><small>Fundo de reserva</small><strong>2,00%</strong></div><div><small>Seguro prestamista</small><strong>0,04%</strong></div></div></div></section><section className="form-card"><div className="form-card-heading"><div><span className="eyebrow gold">02 · DADOS VARIÁVEIS</span><h2>Informações do cliente e plano</h2></div><Users size={20} /></div><div className="form-grid"><label className="span-2">Nome do cliente<input value={client} onChange={e => setClient(e.target.value)} placeholder="Pessoa física ou jurídica" required /></label><label>Valor do bem / crédito<input type="number" value={credit} onChange={e => setCredit(e.target.value)} placeholder="R$ 0,00" required /></label><label>Valor de adesão<input type="number" value={entry} onChange={e => setEntry(e.target.value)} placeholder="R$ 0,00" /></label><label>Parcela mensal<input type="number" value={installment} onChange={e => setInstallment(e.target.value)} placeholder="R$ 0,00" required /></label><label>Prazo (meses)<input type="number" value={term} min={chosenSegment.min_term} max={chosenSegment.max_term} onChange={e => setTerm(e.target.value)} required /><small className="field-help">Permitido: {chosenSegment.min_term} a {chosenSegment.max_term} meses</small></label></div><button className="button button-primary full" type="submit"><FileText size={17} /> Gerar proposta em PDF</button></section></form><aside className="proposal-preview"><div className="preview-toolbar"><span>PRÉVIA DO DOCUMENTO</span><span className="live-dot">AO VIVO</span></div><div className="pdf-page"><div className="pdf-header"><Logo compact /><span>PARCEIRO AUTORIZADO</span></div><div className="pdf-title"><span>SIMULAÇÃO DE CRÉDITO</span><h2>Proposta de consórcio</h2><small>PROP. 0001 · {chosenSegment.name.toUpperCase()} · {date(new Date())}</small></div><div className="pdf-client"><small>PROPOSTA PREPARADA PARA</small><strong>{client || 'Nome do cliente'}</strong></div><div className="pdf-cards"><div><small>VALOR DO CRÉDITO</small><strong>{credit ? money(Number(credit)) : 'R$ 0,00'}</strong></div><div><small>ADESÃO</small><strong>{entry ? money(Number(entry)) : 'R$ 0,00'}</strong></div><div><small>PARCELA MENSAL</small><strong>{installment ? money(Number(installment)) : 'R$ 0,00'}</strong></div><div><small>PRAZO</small><strong>{term} meses</strong></div></div><h4>COMPOSIÇÃO DA TAXA ADMINISTRATIVA</h4><div className="pdf-rates"><div><span>Taxa de administração total</span><b>18,00%</b></div><div><span>Fundo de reserva</span><b>2,00%</b></div><div><span>Seguro prestamista</span><b>0,04%</b></div></div><p className="pdf-note">As taxas apresentadas são oficiais e definidas pela administração. Os valores já estão considerados na composição da parcela.</p><div className="pdf-footer"><strong>{chosenBrand.name}</strong><span>Proposta válida para análise de crédito · Consulte condições completas</span></div></div>{generated && <div className="generated-banner"><Check size={16} /> Proposta criada. O download ficará disponível no documento final.</div>}</aside></div></>; }
 
 function ProfilePage({ profile, onUpdate }: { profile: Profile; onUpdate: (profile: Profile) => void }) {
@@ -1879,30 +2353,61 @@ function PublicCatalog() {
         }
         setCategories(catRows.filter(c => c.count > 0).sort((a, b) => b.count - a.count));
 
-        // 3) Marcas
+        // 3) Marcas (DINÂMICO 100% da tabela `public.brands` quando disponível)
         const brandRows: BrandChip[] = [];
         try {
-          const br = await supabase.from('brands').select('id,name,accent_color').eq('is_active', true).order('name');
-          if (br.data) for (const b of br.data as Array<{ id: string; name: string; accent_color?: string }>) brandRows.push({ id: b.id, name: b.name, accent_color: b.accent_color, count: 0 });
+          const br = await supabase
+            .from('brands')
+            .select('id,name,accent_color,slug,is_active')
+            .order('name', { ascending: true });
+          if (br.data) {
+            for (const b of br.data as Array<{ id: string; name: string; accent_color?: string; slug?: string; is_active: boolean }>) {
+              // Marcas inativas NÃO aparecem nos filtros da vitrine
+              if (!b.is_active) continue;
+              brandRows.push({
+                id: b.id,
+                name: b.name,
+                accent_color: b.accent_color,
+                count: 0,
+              });
+            }
+          }
         } catch { /* ignore */ }
         if (brandRows.length === 0) {
+          // Fallback: extrai as marcas das próprias máquinas caso a tabela brands não exista
           const seen = new Map<string, BrandChip>();
           for (const m of machines) {
             if (!m.brand) continue;
-            const key = m.brand.toLowerCase();
-            if (!seen.has(key)) seen.set(key, { id: key, name: m.brand.toUpperCase(), count: 0 });
+            const cleaned = m.brand.trim();
+            if (cleaned.length < 2) continue;
+            const key = cleaned.toUpperCase();
+            if (!seen.has(key)) {
+              seen.set(key, {
+                id: key.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+                name: key,
+                accent_color: '#B8963F',
+                count: 0,
+              });
+            }
           }
           for (const v of seen.values()) brandRows.push(v);
         }
-        for (const b of brandRows) b.count = machines.filter(m => m.brand && (String(m.brand).toLowerCase() === b.name.toLowerCase() || String(m.brand) === b.id)).length;
-        const extrasB = new Map<string, number>();
-        for (const m of machines) {
-          if (!m.brand) continue;
-          const exists = brandRows.some(b => b.name.toLowerCase() === m.brand.toLowerCase());
-          if (!exists) extrasB.set(m.brand.toUpperCase(), (extrasB.get(m.brand.toUpperCase()) || 0) + 1);
+        // Conta máquinas reais por marca (match case-insensitive)
+        for (const b of brandRows) {
+          b.count = machines.filter(m => {
+            if (!m.brand) return false;
+            const mb = m.brand.trim().toUpperCase();
+            const bb = b.name.trim().toUpperCase();
+            return mb === bb || String(m.brand) === b.id;
+          }).length;
         }
-        for (const [name, count] of extrasB.entries()) brandRows.push({ id: name.toLowerCase(), name, count });
-        setBrands(brandRows.filter(b => b.count > 0).sort((a, b) => b.count - a.count));
+        // Marcas novas sem máquinas ainda = aparecem mas com count 0? NÃO: melhor filtrar para o chip só aparecer
+        // se a marca tem pelo menos 1 máquina cadastrada (evita ruído na vitrine)
+        setBrands(
+          brandRows
+            .filter(b => b.count > 0)
+            .sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name))
+        );
       } catch (e) { console.error(e); } finally { setLoading(false); }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
