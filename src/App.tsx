@@ -256,97 +256,101 @@ function MachineDetail({ machines }: { machines: Machine[] }) {
 
   const offer = `🚜 *${machine.category} ${machine.display_name}*\n💰 *Valor:* ${money(machine.value)}\n✅ *Entrada:* ${money(machine.entry)}\n📅 *Parcelas:* a partir de: ${money(machine.installment)}`;
   const copy = async () => { await navigator.clipboard?.writeText(offer); setCopied(true); setTimeout(() => setCopied(false), 1800); };
-  return <>
-    <button className="back-link" onClick={() => navigate(-1)}>← Voltar para catálogo</button>
-    <div className="detail-layout">
-      <div>
-        <div className="detail-gallery">
-          <button className="detail-main-image" onClick={() => currentImgUrl && setZoom(true)}>
-            {currentImgUrl
-              ? <img src={currentImgUrl} alt={machine.display_name} />
-              : <div className="image-placeholder large"><ImageIcon size={42} /><span>FOTO NÃO CADASTRADA</span></div>}
-          </button>
-          <div className="thumb-row">
-            {validPhotos.length === 0 && (
-              <div className="thumb active">
-                {machine.image ? <img src={machine.image} alt="Miniatura" /> : <ImageIcon size={16} />}
-              </div>
-            )}
-            {validPhotos.map((p, i) => (
-              <button
-                type="button"
-                key={`${p.storage_path || ''}-${p.public_url || ''}-${i}`}
-                className={i === activeIndex ? 'thumb active' : 'thumb'}
-                onClick={() => setActiveIndex(i)}
-                title={`Foto ${i + 1}${isPrincipalPhoto(p) ? ' · Principal' : ''}`}
-              >
-                {p.public_url ? <img src={p.public_url} alt={`Miniatura ${i + 1}`} /> : <ImageIcon size={16} />}
+  return (
+    <div style={{ minHeight: '100vh', background: '#f5f2ec' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '26px 22px 60px' }}>
+        <button className="back-link" onClick={() => navigate(-1)}>← Voltar para catálogo</button>
+        <div className="detail-layout">
+          <div>
+            <div className="detail-gallery">
+              <button className="detail-main-image" onClick={() => currentImgUrl && setZoom(true)}>
+                {currentImgUrl
+                  ? <img src={currentImgUrl} alt={machine.display_name} />
+                  : <div className="image-placeholder large"><ImageIcon size={42} /><span>FOTO NÃO CADASTRADA</span></div>}
               </button>
-            ))}
-          </div>
-        </div>
-        <div className="detail-copy">
-          <span className="eyebrow gold">FICHA TÉCNICA E COMERCIAL</span>
-          <div className="detail-title">
-            <div>
-              <h1>{machine.display_name}</h1>
-              <p>{machine.brand} · {machine.category} · {machine.year}</p>
+              <div className="thumb-row">
+                {validPhotos.length === 0 && (
+                  <div className="thumb active">
+                    {machine.image ? <img src={machine.image} alt="Miniatura" /> : <ImageIcon size={16} />}
+                  </div>
+                )}
+                {validPhotos.map((p, i) => (
+                  <button
+                    type="button"
+                    key={`${p.storage_path || ''}-${p.public_url || ''}-${i}`}
+                    className={i === activeIndex ? 'thumb active' : 'thumb'}
+                    onClick={() => setActiveIndex(i)}
+                    title={`Foto ${i + 1}${isPrincipalPhoto(p) ? ' · Principal' : ''}`}
+                  >
+                    {p.public_url ? <img src={p.public_url} alt={`Miniatura ${i + 1}`} /> : <ImageIcon size={16} />}
+                  </button>
+                ))}
+              </div>
             </div>
-            <span className="badge"><Check size={13} /> Nova de fábrica</span>
-          </div>
-          <p className="long-copy">{machine.description || 'Equipamento selecionado para operações de alta produtividade, com excelente desempenho, robustez e suporte especializado.'}</p>
-          <div className="quick-stats">
-            <div><span>Potência</span><strong>{machine.power}</strong></div>
-            <div><span>Peso operacional</span><strong>{machine.weight}</strong></div>
-            <div><span>Horímetro</span><strong>{machine.hours}</strong></div>
-            <div><span>Localização</span><strong>{machine.location}</strong></div>
-          </div>
-          <section className="detail-section">
-            <h2>Especificações técnicas</h2>
-            <div className="spec-grid">
-              {Object.entries(machine.specs).map(([key, value]) => (
-                <div className="spec-item" key={key}>
-                  <span>{key}</span>
-                  <strong>{value}</strong>
+            <div className="detail-copy">
+              <span className="eyebrow gold">FICHA TÉCNICA E COMERCIAL</span>
+              <div className="detail-title">
+                <div>
+                  <h1>{machine.display_name}</h1>
+                  <p>{machine.brand} · {machine.category} · {machine.year}</p>
                 </div>
-              ))}
+                <span className="badge"><Check size={13} /> Nova de fábrica</span>
+              </div>
+              <p className="long-copy">{machine.description || 'Equipamento selecionado para operações de alta produtividade, com excelente desempenho, robustez e suporte especializado.'}</p>
+              <div className="quick-stats">
+                <div><span>Potência</span><strong>{machine.power}</strong></div>
+                <div><span>Peso operacional</span><strong>{machine.weight}</strong></div>
+                <div><span>Horímetro</span><strong>{machine.hours}</strong></div>
+                <div><span>Localização</span><strong>{machine.location}</strong></div>
+              </div>
+              <section className="detail-section">
+                <h2>Especificações técnicas</h2>
+                <div className="spec-grid">
+                  {Object.entries(machine.specs).map(([key, value]) => (
+                    <div className="spec-item" key={key}>
+                      <span>{key}</span>
+                      <strong>{value}</strong>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <section className="detail-section">
+                <h2>Principais aplicações</h2>
+                <div className="tag-list">
+                  {machine.applications.map(item => <span key={item}>{item}</span>)}
+                </div>
+              </section>
             </div>
-          </section>
-          <section className="detail-section">
-            <h2>Principais aplicações</h2>
-            <div className="tag-list">
-              {machine.applications.map(item => <span key={item}>{item}</span>)}
+          </div>
+          <aside className="offer-card">
+            <div className="offer-top">
+              <span className="eyebrow gold">CONDIÇÃO COMERCIAL</span>
+              <span className="offer-status">Disponível</span>
             </div>
-          </section>
+            <h2>Uma oferta pronta para compartilhar</h2>
+            <div className="offer-price">
+              <small>VALOR TOTAL</small>
+              <strong>{money(machine.value)}</strong>
+            </div>
+            <div className="offer-line"><span>Entrada</span><b>{money(machine.entry)}</b></div>
+            <div className="offer-line"><span>Parcela a partir de</span><b>{money(machine.installment)}</b></div>
+            <button className={copied ? 'button button-success full' : 'button button-primary full'} onClick={copy}>
+              {copied ? <><Check size={16} /> Oferta copiada</> : <><Clipboard size={16} /> Copiar oferta para WhatsApp</>}
+            </button>
+            <p className="offer-footnote">Os valores refletem as condições cadastradas pela administração.</p>
+          </aside>
         </div>
       </div>
-      <aside className="offer-card">
-        <div className="offer-top">
-          <span className="eyebrow gold">CONDIÇÃO COMERCIAL</span>
-          <span className="offer-status">Disponível</span>
+      {zoom && currentImgUrl && (
+        <div className="modal-backdrop" onClick={() => setZoom(false)}>
+          <div className="zoom-modal" onClick={e => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setZoom(false)}><X /></button>
+            <img src={currentImgUrl} alt={machine.display_name} />
+          </div>
         </div>
-        <h2>Uma oferta pronta para compartilhar</h2>
-        <div className="offer-price">
-          <small>VALOR TOTAL</small>
-          <strong>{money(machine.value)}</strong>
-        </div>
-        <div className="offer-line"><span>Entrada</span><b>{money(machine.entry)}</b></div>
-        <div className="offer-line"><span>Parcela a partir de</span><b>{money(machine.installment)}</b></div>
-        <button className={copied ? 'button button-success full' : 'button button-primary full'} onClick={copy}>
-          {copied ? <><Check size={16} /> Oferta copiada</> : <><Clipboard size={16} /> Copiar oferta para WhatsApp</>}
-        </button>
-        <p className="offer-footnote">Os valores refletem as condições cadastradas pela administração.</p>
-      </aside>
+      )}
     </div>
-    {zoom && currentImgUrl && (
-      <div className="modal-backdrop" onClick={() => setZoom(false)}>
-        <div className="zoom-modal" onClick={e => e.stopPropagation()}>
-          <button className="modal-close" onClick={() => setZoom(false)}><X /></button>
-          <img src={currentImgUrl} alt={machine.display_name} />
-        </div>
-      </div>
-    )}
-  </>;
+  );
 }
 
 function Compare({ machines }: { machines: Machine[] }) {
