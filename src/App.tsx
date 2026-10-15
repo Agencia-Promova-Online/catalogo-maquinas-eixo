@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { ArrowLeft, BarChart3, Bell, Building2, Calculator, Check, ChevronRight, Clipboard, Database, Eye, EyeOff, FileText, Grid2X2, Image as ImageIcon, LayoutDashboard, LockKeyhole, LogOut, Menu, Package, Pencil, Plus, Save, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Tags, Trash2, Users, X, Zap } from 'lucide-react';
@@ -257,8 +257,8 @@ function MachineDetail({ machines }: { machines: Machine[] }) {
   const offer = `🚜 *${machine.category} ${machine.display_name}*\n💰 *Valor:* ${money(machine.value)}\n✅ *Entrada:* ${money(machine.entry)}\n📅 *Parcelas:* a partir de: ${money(machine.installment)}`;
   const copy = async () => { await navigator.clipboard?.writeText(offer); setCopied(true); setTimeout(() => setCopied(false), 1800); };
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f2ec' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '26px 22px 60px' }}>
+    <div className="public-home" style={{ minHeight: '100vh', background: '#f5f2ec' }}>
+      <div className="public-container">
         <button className="back-link" onClick={() => navigate(-1)}>← Voltar para catálogo</button>
         <div className="detail-layout">
           <div>
@@ -367,8 +367,8 @@ function Compare({ machines }: { machines: Machine[] }) {
   const allSpecs = [...new Set(current.flatMap(m => Object.keys(m.specs)))].sort();
   const slots = 3;
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f2ec' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '26px 22px 60px' }}>
+    <div className="public-home" style={{ minHeight: '100vh', background: '#f5f2ec' }}>
+      <div className="public-container">
         <PageHeader
           kicker="DECISÃO COMERCIAL"
           title="Comparar máquinas"
@@ -388,10 +388,7 @@ function Compare({ machines }: { machines: Machine[] }) {
         />
 
       {/* ========== SLOTS SELECIONADOS (fixos = 3 colunas, como se fosse "carrinho") ========== */}
-      <div style={{
-        display: 'grid', gap: 14, gridTemplateColumns: `repeat(${slots}, minmax(0, 1fr))`,
-        marginBottom: 22,
-      }}>
+      <div className="compare-slots">
         {Array.from({ length: slots }).map((_, i) => {
           const m = current[i];
           return (
@@ -520,9 +517,7 @@ function Compare({ machines }: { machines: Machine[] }) {
         </div>
       ) : (
         <>
-          <div className="comparison-grid" style={{
-            gridTemplateColumns: `repeat(${Math.min(current.length, 3)}, minmax(0, 1fr))`,
-          }}>
+          <div className="comparison-grid" style={{ ['--cmp']: Math.min(current.length, 3) } as CSSProperties}>
             {current.map(m => (
               <article className="comparison-card" key={m.id}>
                 <div className="compare-image">
@@ -1663,7 +1658,7 @@ function NewUserModal({ onClose, onDone, setMessage }: { onClose: () => void; on
       <p className="muted" style={{ marginTop: 0 }}>Usuário criado via <b>supabase.auth.signUp</b> — a linha em <code>usuarios_perfil</code> é criada automaticamente pelo trigger do banco.</p>
       <label>Nome completo<input value={full_name} onChange={e => setFullName(e.target.value)} required minLength={2} maxLength={120}/></label>
       <label>E-mail<input type="email" value={email} onChange={e => setEmail(e.target.value)} required/></label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div className="grid-2">
         <label>Perfil
           <select value={role} onChange={e => setRole(e.target.value as Role)}>
             <option value="seller">Vendedor</option>
@@ -1755,7 +1750,7 @@ function EditUserModal({ row, onClose, onDone, setMessage }: { row: AdminUserRow
       </div>
       <label>E-mail<input value={row.email} disabled/></label>
       <label>Nome completo<input value={full_name} onChange={e => setFullName(e.target.value)} required minLength={2} maxLength={120}/></label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div className="grid-2">
         <label>Perfil
           <select value={role} onChange={e => setRole(e.target.value as Role)}>
             <option value="seller">Vendedor</option>
@@ -2515,17 +2510,11 @@ function PublicCatalog() {
         borderBottom: '1px solid #ece4d0',
         position: 'sticky', top: 0, zIndex: 50,
       }}>
-        <div style={{
-          maxWidth: 1200, margin: '0 auto', padding: '14px 22px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20,
-        }}>
+        <div className="public-header-row">
           <div style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
             <Logo />
           </div>
-          <div className="public-search" style={{
-            flex: 1, maxWidth: 720, position: 'relative',
-            display: 'flex', alignItems: 'center',
-          }}>
+          <div className="public-search">
             <Search size={17} style={{ position: 'absolute', left: 14, color: '#8c8166' }} />
             <input
               value={query} onChange={e => setQuery(e.target.value)}
@@ -2539,20 +2528,22 @@ function PublicCatalog() {
               onBlur={(e) => { e.currentTarget.style.borderColor = '#e3dbc5'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.background = '#fbf7ee'; }}
             />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="public-header-actions">
             <button
               className="button button-outline"
+              title="Comparar máquinas"
               onClick={() => navigate('/comparar', { state: { fromPublic: true } })}
               style={{ padding: '10px 16px', fontSize: 14, background: '#fff' }}
             >
-              <Grid2X2 size={15}/> Comparar máquinas
+              <Grid2X2 size={15}/> <span className="hide-sm">Comparar máquinas</span>
             </button>
             <button
               className="button button-primary"
+              title="Acesso equipe"
               onClick={() => navigate('/login')}
               style={{ padding: '10px 18px', fontSize: 14 }}
             >
-              <LockKeyhole size={15}/> Acesso equipe
+              <LockKeyhole size={15}/> <span className="hide-sm">Acesso equipe</span>
             </button>
           </div>
         </div>
@@ -2560,14 +2551,7 @@ function PublicCatalog() {
 
       {/* ===================== HERO / INTRO ===================== */}
       <section style={{ maxWidth: 1200, margin: '24px auto 10px', padding: '0 22px' }}>
-        <div style={{
-          background: '#fff',
-          border: '1px solid #efe7d0',
-          borderRadius: 20,
-          padding: '30px 32px 24px',
-          display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: 28, alignItems: 'center',
-          boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-        }}>
+        <div className="public-hero">
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span className="eyebrow" style={{ color: '#b8963f' }}>EIXO-CATÁLOGO</span>
@@ -2599,12 +2583,12 @@ function PublicCatalog() {
               </span>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: -6, alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div className="public-hero-media">
             {[
               machines.find(m => !!m.image)?.image,
               machines.find(m => m.id !== machines.find(x => x.image)?.id && !!m.photos?.[0]?.public_url)?.photos?.[0]?.public_url,
             ].filter(Boolean).slice(0, 2).map((src, i) => (
-              <div key={i} style={{
+              <div key={i} className="public-hero-thumb" style={{
                 width: 220, height: 160, borderRadius: 18, overflow: 'hidden',
                 background: 'linear-gradient(135deg, #fff4d6 0%, #f4e6b9 100%)',
                 border: '1px solid #ede2c0',
@@ -2922,14 +2906,14 @@ function PublicCatalog() {
         color: '#d6d3d1',
         padding: '28px 22px 34px',
       }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr auto', gap: 20, alignItems: 'center' }}>
+        <div className="public-footer-row">
           <div>
             <div style={{ color: '#fff', fontWeight: 800, fontSize: 18 }}>Eixo-Catálogo</div>
             <div style={{ color: '#a8a29e', fontSize: 13, marginTop: 4 }}>
               Operação comercial · {new Date().getFullYear()} — Todos os direitos reservados.
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="public-footer-actions">
             <button className="button button-outline" onClick={() => navigate('/comparar', { state: { fromPublic: true } })} style={{ padding: '10px 16px', fontSize: 13, background: 'transparent', borderColor: '#3f3a33', color: '#fff' }}>
               <Grid2X2 size={14}/> Comparar
             </button>
