@@ -91,3 +91,48 @@ h1,h2,h3,h4,strong,b { font-family:'Manrope',sans-serif; } h1,h2,h3,p { margin: 
 @media (max-width:560px){
   .grid-2{grid-template-columns:1fr}
 }
+
+/* ===================== FORMULÁRIOS EM MODAIS ===================== */
+
+/* Modal de formulário: largura controlada e rolagem interna no mobile */
+.form-modal{width:560px;max-width:94vw;max-height:92vh;overflow-y:auto;text-align:left}
+
+/* Cabeçalho do modal */
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:20px}
+.modal-sub{font-size:13px;color:var(--muted);line-height:1.5;margin:6px 0 0}
+.modal-x{border:0;background:#f4f2ec;border-radius:10px;width:34px;height:34px;display:grid;place-items:center;color:#57534e;flex-shrink:0;cursor:pointer;transition:background .15s,color .15s}
+.modal-x:hover{background:#e9e5da;color:#1c1917}
+
+/* Controles de formulário dentro de QUALQUER modal (.zoom-modal) */
+.zoom-modal label{display:grid;gap:7px;font-size:13px;font-weight:600;color:#3d3b35;margin-bottom:16px}
+.zoom-modal input:not([type=checkbox]):not([type=radio]),
+.zoom-modal select,
+.zoom-modal textarea{width:100%;border:1px solid #dedcd6;border-radius:10px;padding:12px 14px;background:#fff;color:var(--ink);font-size:14px;font-family:inherit;outline:none;transition:border-color .15s,box-shadow .15s}
+.zoom-modal input:not([type=checkbox]):not([type=radio]):focus,
+.zoom-modal select:focus,
+.zoom-modal textarea:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(189,151,61,.14)}
+.zoom-modal input:disabled{background:#f6f4ef;color:#8b8781}
+.field-help{display:block;font-size:12px;color:#8b8781;font-weight:500;margin:-4px 0 14px}
+.form-success{background:#eefaf2;color:#1f7a4d;padding:11px 12px;border-radius:9px;font-size:13px;margin-bottom:14px}
+
+/* Campo de senha com botão mostrar/ocultar */
+.password-field{position:relative}
+.password-field input{padding-right:46px!important}
+.password-field button{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;color:#8c8166;cursor:pointer;padding:7px;border-radius:8px;display:grid;place-items:center}
+.password-field button:hover{background:#f4f2ec}
+
+/* Interruptor (switch) de conta ativa */
+.switch-field{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#fff;border:1px solid #e7e1cf;border-radius:10px;margin-bottom:16px}
+.switch-field strong{display:block;font-size:13px;color:#3d3b35}
+.switch-field small{display:block;font-size:11px;color:#94908a;font-weight:500;margin-top:2px}
+.switch{width:46px;height:26px;border-radius:999px;border:0;background:#d9d6cd;position:relative;transition:background .18s;flex-shrink:0;cursor:pointer}
+.switch span{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .18s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.switch.on{background:var(--gold)}
+.switch.on span{transform:translateX(20px)}
+
+/* Rodapé de ações do modal */
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+@media (max-width:560px){
+  .modal-actions{flex-direction:column-reverse}
+  .modal-actions .button{width:100%}
+}

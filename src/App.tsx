@@ -179,9 +179,9 @@ async function getProfile(userId: string): Promise<Profile> {
 
 function Auth({ onAuth }: { onAuth: (profile: Profile) => void }) {
   const [mode, setMode] = useState<'login' | 'bootstrap'>('login');
-  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [needsConfirm, setNeedsConfirm] = useState(false); const [resent, setResent] = useState(false);
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); setError('');
+    event.preventDefault(); setError(''); setNeedsConfirm(false); setResent(false);
     if (password.length < 8 || !email || (mode === 'bootstrap' && name.trim().length < 2)) {
       setError('Informe os dados obrigatórios corretamente.'); return;
     }
@@ -197,7 +197,9 @@ function Auth({ onAuth }: { onAuth: (profile: Profile) => void }) {
             }
           })
         : await supabase.auth.signInWithPassword({ email, password });
-      if (response.error || !response.data.user || !response.data.session) throw new Error('auth');
+      if (response.error || !response.data.user || !response.data.session) {
+        throw new Error(response.error?.message || 'auth');
+      }
       const user = response.data.user;
       if (mode === 'bootstrap') {
         // Garante linha em usuarios_perfil (trigger handle_new_user já deve ter criado, mas tenta explicitamente por seguranca)
@@ -214,19 +216,37 @@ function Auth({ onAuth }: { onAuth: (profile: Profile) => void }) {
       }
       onAuth(await getProfile(user.id));
     } catch (cause) {
-      const msg = cause instanceof Error ? cause.message : '';
-      setError(
-        msg === 'profile_inactive'
-          ? 'Este usuário está desativado. Fale com um administrador.'
-          : mode === 'bootstrap'
-            ? 'Não foi possível criar o administrador inicial. Verifique se já existe um administrador.'
-            : 'Credenciais inválidas. Verifique seu e-mail e senha.'
-      );
+      const raw = cause instanceof Error ? cause.message : '';
+      if (raw === 'profile_inactive') {
+        setError('Este usuário está desativado. Fale com um administrador.');
+      } else if (/email not confirmed|email_not_confirmed/i.test(raw)) {
+        setNeedsConfirm(true);
+        setError('Seu e-mail ainda não foi confirmado. Abra o link enviado para ' + email + ' (verifique também Spam/Lixo eletrônico) e tente novamente.');
+      } else if (/invalid login credentials/i.test(raw)) {
+        setError('E-mail ou senha incorretos. Confira os dados e tente novamente.');
+      } else if (mode === 'bootstrap') {
+        setError('Não foi possível criar o administrador inicial. Verifique se já existe um administrador.');
+      } else {
+        setError('Não foi possível entrar. Tente novamente.');
+      }
     } finally {
       setBusy(false);
     }
   };
-  return <main className="auth-shell"><div className="auth-glow" /><section className="auth-panel"><div className="auth-logo"><Logo /></div><div className="auth-card"><div className="eyebrow"><LockKeyhole size={16} /> ACESSO RESTRITO</div><h1>{mode === 'login' ? 'Acesso da equipe' : 'Administrador inicial'}</h1><p className="muted">{mode === 'login' ? 'Entre para consultar o catálogo e criar propostas.' : 'Crie o primeiro acesso administrativo do seu catálogo.'}</p><form onSubmit={submit}>{mode === 'bootstrap' && <label>Nome completo<input value={name} onChange={e => setName(e.target.value)} placeholder="Seu nome" required minLength={2} /></label>}<label>E-mail<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nome@empresa.com" required /></label><label>Senha<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo de 8 caracteres" required minLength={8} /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary full" disabled={busy}>{busy ? <><span className="mini-spinner" /> Entrando...</> : mode === 'login' ? 'Entrar na operação' : 'Criar administrador'}</button></form><div className="auth-footer"><span>{mode === 'login' ? 'Primeiro acesso?' : 'Já possui acesso?'}</span><button className="text-button" onClick={() => { setMode(mode === 'login' ? 'bootstrap' : 'login'); setError(''); }}>{mode === 'login' ? 'Configurar administrador' : 'Voltar para login'}</button></div></div><p className="auth-note">Cada funcionário possui um usuário próprio. O acesso é individual e protegido.</p></section></main>;
+
+  const resendConfirmation = async () => {
+    setError(''); setResent(false); setBusy(true);
+    try {
+      const { error: e } = await supabase.auth.resend({ type: 'signup', email });
+      if (e) throw e;
+      setResent(true);
+    } catch {
+      setError('Não foi possível reenviar o e-mail agora. Tente novamente em instantes.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <main className="auth-shell"><div className="auth-glow" /><section className="auth-panel"><div className="auth-logo"><Logo /></div><div className="auth-card"><div className="eyebrow"><LockKeyhole size={16} /> ACESSO RESTRITO</div><h1>{mode === 'login' ? 'Acesso da equipe' : 'Administrador inicial'}</h1><p className="muted">{mode === 'login' ? 'Entre para consultar o catálogo e criar propostas.' : 'Crie o primeiro acesso administrativo do seu catálogo.'}</p><form onSubmit={submit}>{mode === 'bootstrap' && <label>Nome completo<input value={name} onChange={e => setName(e.target.value)} placeholder="Seu nome" required minLength={2} /></label>}<label>E-mail<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nome@empresa.com" required /></label><label>Senha<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo de 8 caracteres" required minLength={8} /></label>{error && <div className="form-error">{error}</div>}{resent && <div className="form-success">E-mail de confirmação reenviado. Confira sua caixa de entrada.</div>}{needsConfirm && <button type="button" className="button button-outline full" style={{ marginBottom: 10 }} onClick={resendConfirmation} disabled={busy}>Reenviar e-mail de confirmação</button>}<button className="button button-primary full" disabled={busy}>{busy ? <><span className="mini-spinner" /> Entrando...</> : mode === 'login' ? 'Entrar na operação' : 'Criar administrador'}</button></form><div className="auth-footer"><span>{mode === 'login' ? 'Primeiro acesso?' : 'Já possui acesso?'}</span><button className="text-button" onClick={() => { setMode(mode === 'login' ? 'bootstrap' : 'login'); setError(''); setNeedsConfirm(false); setResent(false); }}>{mode === 'login' ? 'Configurar administrador' : 'Voltar para login'}</button></div></div><p className="auth-note">Cada funcionário possui um usuário próprio. O acesso é individual e protegido.</p></section></main>;
 }
 
 function AppShell({ profile, onLogout, children }: { profile: Profile; onLogout: () => void; children: ReactNode }) {
@@ -1597,6 +1617,16 @@ function AdminUsers() {
 
 type MsgFn = (m: { kind: 'ok' | 'err'; text: string } | null) => void;
 
+// Traduz erros comuns do Supabase Auth para uma mensagem clara em pt-BR
+function friendlyCreateError(raw: string): string {
+  if (/rate limit|too many requests|over_email_send_rate_limit/i.test(raw)) {
+    return 'Limite de envio de e-mails do Supabase atingido. O cadastro por confirmação de e-mail consome uma cota baixa por hora do serviço de e-mail do Supabase. Para não depender dele: desative a confirmação de e-mail (Authentication → Providers → Email) ou configure um SMTP próprio.';
+  }
+  if (/already registered|already exists|duplicate|unique constraint/i.test(raw)) return 'Já existe um usuário com este e-mail.';
+  if (/at least 6|password should be/i.test(raw)) return 'A senha é muito curta (mínimo 6 caracteres).';
+  return raw || 'Não foi possível criar o usuário.';
+}
+
 function NewUserModal({ onClose, onDone, setMessage }: { onClose: () => void; onDone: () => void; setMessage: MsgFn }) {
   const [busy, setBusy] = useState(false);
   const [full_name, setFullName] = useState('');
@@ -1618,8 +1648,38 @@ function NewUserModal({ onClose, onDone, setMessage }: { onClose: () => void; on
     setBusy(true);
     setMessage(null);
     try {
-      // === CRIA VIA SUPABASE AUTH SDK NATIVO (signUp) ===
-      // 1) cria linha auth.users, 2) dispara trigger handle_new_user -> cria usuarios_perfil automaticamente
+      // === CAMINHO RECOMENDADO: RPC admin_create_user (SECURITY DEFINER) ===
+      // Cria o usuário em auth.users JÁ CONFIRMADO (email_confirmed_at = now()),
+      // NÃO envia convite por e-mail e NÃO troca a sessão do administrador logado.
+      const rpc = await supabase.rpc('admin_create_user', {
+        p_email: email.trim().toLowerCase(),
+        p_full_name: full_name.trim(),
+        p_role: role,
+        p_is_active: is_active,
+        p_temp_password: pwd,
+      });
+      if (!rpc.error) {
+        const newId = (rpc.data as string | null) ?? null;
+        // O trigger handle_new_user cria o perfil como "vendedor" por padrão → sincroniza o papel/ativo reais
+        if (newId) {
+          try { await supabase.rpc('admin_set_perfil_acesso', { p_perfil_id: newId, p_papel: role, p_ativo: is_active }); } catch { /* opcional */ }
+        }
+        setMessage({ kind: 'ok', text: 'Usuário criado. Ele já pode entrar com o e-mail e a senha temporária.' });
+        onDone();
+        return;
+      }
+
+      // RPC indisponível (migration não aplicada) ou erro de negócio.
+      const rpcMsg = rpc.error.message || String(rpc.error);
+      console.warn('[admin_create_user] falhou → tentando signUp:', rpcMsg);
+      // E-mail já cadastrado: não cai no signUp (que tentaria enviar outro e-mail e pioraria a cota)
+      if (/already exists|duplicate|unique constraint/i.test(rpcMsg)) {
+        setLocalErr('Já existe um usuário com este e-mail.');
+        return;
+      }
+
+      // === FALLBACK: signUp do SDK (quando a migration das RPCs ainda não foi aplicada) ===
+      const { data: { session: prev } } = await supabase.auth.getSession();
       const signUpRes = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password: pwd,
@@ -1630,60 +1690,88 @@ function NewUserModal({ onClose, onDone, setMessage }: { onClose: () => void; on
       });
       if (signUpRes.error) throw new Error(signUpRes.error.message || String(signUpRes.error));
       const userId = signUpRes.data.user?.id;
-      if (!userId) throw new Error('Conta criada mas sem id de usuário. Tente recarregar.');
-      // Garante que o papel foi gravado (garantia dupla, trigger tbem cria)
-      try {
-        await supabase.from('usuarios_perfil').update({ nome: full_name.trim(), papel: role }).eq('id', userId);
-      } catch { /* ignore, trigger handled it */ }
-      // Aplicar ativo/desativo via RPC admin_set_perfil_acesso (também da sync em profiles antiga + user_roles legada)
-      try {
-        await supabase.rpc('admin_set_perfil_acesso', { p_perfil_id: userId, p_papel: role, p_ativo: is_active });
-      } catch { /* ignore se migration ainda nao rodou: role e nome foram salvos acima */ }
-      setMessage({ kind: 'ok', text: 'Usuário criado via Supabase Auth! Envie as credenciais para o colaborador.' });
+      if (!userId) throw new Error('Conta criada mas sem id de usuário. Recarregue a página.');
+      try { await supabase.from('usuarios_perfil').update({ nome: full_name.trim(), papel: role }).eq('id', userId); } catch { /* trigger já criou */ }
+      try { await supabase.rpc('admin_set_perfil_acesso', { p_perfil_id: userId, p_papel: role, p_ativo: is_active }); } catch { /* migration ainda não rodou */ }
+      // O signUp pode ter logado o novo usuário no client → restaura a sessão do administrador
+      if (signUpRes.data.session && prev) {
+        try { await supabase.auth.setSession({ access_token: prev.access_token, refresh_token: prev.refresh_token }); } catch { /* ignora */ }
+      }
+      setMessage({ kind: 'ok', text: 'Usuário criado. Se o login não funcionar, confirme o e-mail do colaborador ou desative a confirmação de e-mail no Supabase.' });
       onDone();
     } catch (err) {
       console.error(err);
-      setLocalErr(err instanceof Error ? err.message : 'Erro ao criar.');
+      setLocalErr(friendlyCreateError(err instanceof Error ? err.message : ''));
     } finally {
       setBusy(false);
     }
   };
 
-  return <div className="modal-backdrop" onClick={onClose}>
-    <form className="zoom-modal" style={{ width: 520, maxWidth: '92vw' }} onClick={e => e.stopPropagation()} onSubmit={submit}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div><span className="eyebrow gold">NOVO ACESSO · SUPABASE AUTH</span><h2 style={{ margin: '4px 0 0' }}>Cadastrar usuário</h2></div>
-        <button type="button" className="modal-close" onClick={onClose}><X size={18}/></button>
-      </div>
-      <p className="muted" style={{ marginTop: 0 }}>Usuário criado via <b>supabase.auth.signUp</b> — a linha em <code>usuarios_perfil</code> é criada automaticamente pelo trigger do banco.</p>
-      <label>Nome completo<input value={full_name} onChange={e => setFullName(e.target.value)} required minLength={2} maxLength={120}/></label>
-      <label>E-mail<input type="email" value={email} onChange={e => setEmail(e.target.value)} required/></label>
-      <div className="grid-2">
-        <label>Perfil
-          <select value={role} onChange={e => setRole(e.target.value as Role)}>
-            <option value="seller">Vendedor</option>
-            <option value="admin">Administrador</option>
-          </select>
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="zoom-modal form-modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <header className="modal-head">
+          <div>
+            <span className="eyebrow gold">ACESSOS E PERMISSÕES</span>
+            <h2>Cadastrar usuário</h2>
+            <p className="modal-sub">A conta é criada já confirmada. O colaborador entra com o e-mail e a senha temporária definidos abaixo.</p>
+          </div>
+          <button type="button" className="modal-x" onClick={onClose} aria-label="Fechar"><X size={18}/></button>
+        </header>
+
+        <label>Nome completo
+          <input value={full_name} onChange={e => setFullName(e.target.value)} placeholder="Ex.: Maria Souza" required minLength={2} maxLength={120} autoFocus/>
         </label>
-        <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '14px 14px', background: '#fff', border: '1px solid #e7e1cf', borderRadius: 10 }}>
-          <span style={{ display: 'block', fontSize: 13, marginBottom: 2 }}>Conta ativa</span>
-          <input type="checkbox" style={{ width: 'auto', height: 18, margin: 0 }} checked={is_active} onChange={e => setActive(e.target.checked)}/>
+
+        <label>E-mail
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nome@empresa.com" required/>
         </label>
-      </div>
-      <label>Senha temporária
-        <div style={{ position: 'relative' }}>
-          <input type={showPwd ? 'text' : 'password'} value={pwd} onChange={e => setPwd(e.target.value)} minLength={6} required/>
-          <button type="button" onClick={() => setShowPwd(s => !s)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#8c8166', cursor: 'pointer' }}>{showPwd ? 'Ocultar' : 'Mostrar'}</button>
+
+        <div className="grid-2">
+          <label>Perfil de acesso
+            <select value={role} onChange={e => setRole(e.target.value as Role)}>
+              <option value="seller">Vendedor</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </label>
+          <div className="switch-field">
+            <div>
+              <strong>Conta ativa</strong>
+              <small>Pode acessar o sistema agora</small>
+            </div>
+            <button type="button" role="switch" aria-checked={is_active} aria-label="Conta ativa"
+              className={is_active ? 'switch on' : 'switch'} onClick={() => setActive(v => !v)}>
+              <span />
+            </button>
+          </div>
         </div>
-      </label>
-      <label>Confirmar senha<input type={showPwd ? 'text' : 'password'} value={pwd2} onChange={e => setPwd2(e.target.value)} minLength={6} required/></label>
-      {localErr && <div className="form-error">{localErr}</div>}
-      <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-        <button type="button" className="button button-outline" onClick={onClose} disabled={busy}>Cancelar</button>
-        <button type="submit" className="button button-primary" style={{ marginLeft: 'auto' }} disabled={busy}>{busy ? 'Criando...' : 'Criar via Supabase Auth'}</button>
-      </div>
-    </form>
-  </div>;
+
+        <div className="grid-2">
+          <label>Senha temporária
+            <div className="password-field">
+              <input type={showPwd ? 'text' : 'password'} value={pwd} onChange={e => setPwd(e.target.value)} placeholder="Mínimo 6 caracteres" minLength={6} required/>
+              <button type="button" onClick={() => setShowPwd(s => !s)} aria-label={showPwd ? 'Ocultar senha' : 'Mostrar senha'}>
+                {showPwd ? <EyeOff size={16}/> : <Eye size={16}/>}
+              </button>
+            </div>
+          </label>
+          <label>Confirmar senha
+            <input type={showPwd ? 'text' : 'password'} value={pwd2} onChange={e => setPwd2(e.target.value)} placeholder="Repita a senha" minLength={6} required/>
+          </label>
+        </div>
+        <small className="field-help">O colaborador usará esta senha no primeiro acesso e poderá alterá-la depois.</small>
+
+        {localErr && <div className="form-error">{localErr}</div>}
+
+        <div className="modal-actions">
+          <button type="button" className="button button-outline" onClick={onClose} disabled={busy}>Cancelar</button>
+          <button type="submit" className="button button-primary" disabled={busy}>
+            {busy ? <><span className="mini-spinner"/> Criando...</> : <><Save size={16}/> Criar usuário</>}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 function EditUserModal({ row, onClose, onDone, setMessage }: { row: AdminUserRow; onClose: () => void; onDone: () => void; setMessage: MsgFn }) {
