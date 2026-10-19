@@ -602,7 +602,7 @@ function Compare({ machines }: { machines: Machine[] }) {
 
 function AdminDashboard({ machines }: { machines: Machine[] }) { const navigate = useNavigate(); const pending = machines.reduce((sum, m) => sum + Object.values(m.specs).filter(Boolean).length < 6 ? 1 : 0, 0); const categories = [...new Set(machines.map(m => m.category))]; const brands = [...new Set(machines.map(m => m.brand))]; return <><PageHeader kicker="VISÃO GERAL" title="Bom dia, sua operação está em movimento" description="Acompanhe a saúde do catálogo e os pontos que precisam da sua atenção." action={<button className="button button-primary" onClick={() => navigate('/admin/maquinas/nova')}><Plus size={17} /> Nova máquina</button>} /><div className="stat-grid"><StatCard label="Total de máquinas" value={machines.length} detail="+12% este mês" icon={Package} accent /><StatCard label="Marcas cadastradas" value={brands.length} icon={Tags} /><StatCard label="Categorias usadas" value={categories.length} icon={Grid2X2} /><StatCard label="Fichas completas" value={Math.max(0, machines.length - pending)} detail="de 100% preenchidas" icon={Check} /><StatCard label="Total de fotos" value={machines.filter(m => m.image).length} icon={ImageIcon} /><StatCard label="Sem foto" value={machines.filter(m => !m.image).length} icon={ImageIcon} /></div><div className="dashboard-grid"><section className="panel"><div className="panel-heading"><div><span className="eyebrow gold">ATENÇÃO NECESSÁRIA</span><h2>Qualidade do catálogo</h2></div><span className="pending-number">{pending} pendências</span></div><div className="quality-row"><div className="quality-ring"><strong>{Math.round(((machines.length - pending) / Math.max(machines.length, 1)) * 100)}%</strong><span>completo</span></div><div><h3>Fichas prontas para venda</h3><p className="muted">Revise os campos técnicos para garantir ofertas mais confiáveis.</p><button className="text-button" onClick={() => navigate('/admin/auditoria')}>Abrir auditoria técnica <ChevronRight size={14} /></button></div></div></section><section className="panel"><div className="panel-heading"><div><span className="eyebrow gold">DISTRIBUIÇÃO</span><h2>Máquinas por categoria</h2></div><BarChart3 size={19} /></div>{categories.map(cat => { const count = machines.filter(m => m.category === cat).length; return <button className="bar-row" key={cat} onClick={() => navigate('/admin/maquinas')}><div><span>{cat}</span><b>{count}</b></div><i><em style={{ width: `${(count / machines.length) * 100}%` }} /></i></button> })}</section></div><section className="panel recent-panel"><div className="panel-heading"><div><span className="eyebrow gold">ATIVIDADE</span><h2>Últimos cadastros</h2></div><Link className="text-button" to="/admin/maquinas">Ver todas</Link></div><div className="recent-list">{machines.slice(0, 5).map(m => <button key={m.id} className="recent-item" onClick={() => navigate(`/admin/maquinas/${m.id}`)}><div className="recent-thumb">{m.image ? <img src={m.image} alt="" /> : <Package size={17} />}</div><div><strong>{m.display_name}</strong><small>{m.brand} · {m.category}</small></div><span>{money(m.value)}</span><ChevronRight size={16} /></button>)}</div></section></>; }
 
-function AdminMachines({ machines, setMachines }: { machines: Machine[]; setMachines: (m: Machine[]) => void }) { const navigate = useNavigate(); const [query, setQuery] = useState(''); const filtered = machines.filter(m => `${m.brand} ${m.model} ${m.category}`.toLowerCase().includes(query.toLowerCase())); const remove = (id: string) => { if (window.confirm('Excluir máquina? Ela será removida do catálogo. Esta ação não pode ser desfeita.')) setMachines(machines.filter(m => m.id !== id)); }; return <><PageHeader kicker="GESTÃO DO CATÁLOGO" title="Máquinas" description="Cadastre, revise e mantenha as condições comerciais sempre atualizadas." action={<button className="button button-primary" onClick={() => navigate('/admin/maquinas/nova')}><Plus size={17} /> Nova máquina</button>} /><div className="list-toolbar"><div className="search-box"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar por marca, modelo ou categoria..." /></div><span>{filtered.length} registros</span></div><div className="table-panel"><div className="data-table head"><span>Máquina</span><span>Categoria</span><span>Status</span><span>Valor</span><span>Atualizado</span><span /></div>{filtered.map(m => <div className="data-table" key={m.id}><div className="table-machine"><div className="table-thumb">{m.image ? <img src={m.image} alt="" /> : <Package size={16} />}</div><div><strong>{m.display_name}</strong><small>{m.brand} · {m.model}</small></div></div><span>{m.category}</span><span><i className={`table-status ${m.status}`} />{m.status === 'available' ? 'Disponível' : 'Em negociação'}</span><strong>{money(m.value)}</strong><span>{date(new Date())}</span><div className="row-actions"><button onClick={() => navigate(`/maquina/${m.id}`)} title="Ver"><ChevronRight size={16} /></button><button onClick={() => navigate(`/admin/maquinas/${m.id}`)} title="Editar"><Settings size={16} /></button><button onClick={() => remove(m.id)} title="Excluir"><Trash2 size={16} /></button></div></div>)}</div></>; }
+function AdminMachines({ machines, setMachines }: { machines: Machine[]; setMachines: (m: Machine[]) => void }) { const navigate = useNavigate(); const [query, setQuery] = useState(''); const filtered = machines.filter(m => `${m.brand} ${m.model} ${m.category}`.toLowerCase().includes(query.toLowerCase())); const [deletingId, setDeletingId] = useState<string | null>(null); const remove = async (id: string) => { if (deletingId) return; if (!window.confirm('Excluir máquina? Ela será removida do catálogo. Esta ação não pode ser desfeita.')) return; setDeletingId(id); try { try { await supabase.from('machine_photos').delete().eq('machine_id', id); } catch { /* ignora */ } try { await supabase.from('machine_images').delete().eq('machine_id', id); } catch { /* ignora */ } const { error } = await supabase.from('machines').delete().eq('id', id); if (error) throw new Error(error.message); setMachines(machines.filter(m => m.id !== id)); } catch (err) { console.error('delete machine error', err); alert('Não foi possível excluir a máquina: ' + (err instanceof Error ? err.message : 'erro desconhecido') + '\n\nVerifique as permissões (RLS) de exclusão na tabela "machines".'); } finally { setDeletingId(null); } }; return <><PageHeader kicker="GESTÃO DO CATÁLOGO" title="Máquinas" description="Cadastre, revise e mantenha as condições comerciais sempre atualizadas." action={<button className="button button-primary" onClick={() => navigate('/admin/maquinas/nova')}><Plus size={17} /> Nova máquina</button>} /><div className="list-toolbar"><div className="search-box"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar por marca, modelo ou categoria..." /></div><span>{filtered.length} registros</span></div><div className="table-panel"><div className="data-table head"><span>Máquina</span><span>Categoria</span><span>Status</span><span>Valor</span><span>Atualizado</span><span /></div>{filtered.map(m => <div className="data-table" key={m.id}><div className="table-machine"><div className="table-thumb">{m.image ? <img src={m.image} alt="" /> : <Package size={16} />}</div><div><strong>{m.display_name}</strong><small>{m.brand} · {m.model}</small></div></div><span>{m.category}</span><span><i className={`table-status ${m.status}`} />{m.status === 'available' ? 'Disponível' : 'Em negociação'}</span><strong>{money(m.value)}</strong><span>{date(new Date())}</span><div className="row-actions"><button onClick={() => navigate(`/maquina/${m.id}`)} title="Ver"><ChevronRight size={16} /></button><button onClick={() => navigate(`/admin/maquinas/${m.id}`)} title="Editar"><Settings size={16} /></button><button onClick={() => remove(m.id)} title="Excluir" disabled={deletingId === m.id}><Trash2 size={16} /></button></div></div>)}</div></>; }
 
 function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachines: (m: Machine[]) => void }) {
   const { id } = useParams();
@@ -720,6 +720,7 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
         }
   );
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
   const [uploading, setUploading] = useState(false);
   const [currentPhotos, setCurrentPhotos] = useState<PendingPhoto[]>([]);
@@ -998,7 +999,10 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
+    if (saving) return; // evita duplo clique gerar cadastros duplicados
     if (!form.brand || !form.model) return;
+    setSaving(true);
+    try {
     const normalized: Machine = {
       ...form,
       display_name: form.display_name.trim().replace(/\s+/g, ' ') || `${form.brand} ${form.model}`,
@@ -1103,7 +1107,12 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
     }, 0);
     setMachines(existing ? machines.map(m => (m.id === existing.id ? normalized : m)) : [normalized, ...machines]);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    // Após salvar, volta para a listagem: a próxima edição passa a carregar a máquina existente,
+    // então "Salvar" ATUALIZA o registro em vez de criar cadastros duplicados.
+    navigate('/admin/maquinas');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1292,8 +1301,8 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
             <span className="eyebrow gold">PUBLICAÇÃO</span>
             <h2>Pronto para salvar?</h2>
             <p className="muted">A ficha ficará disponível para a equipe assim que for salva.</p>
-            <button className="button button-primary full" type="submit">
-              {saved ? <><Check size={16} /> Máquina salva</> : 'Salvar máquina'}
+            <button className="button button-primary full" type="submit" disabled={saving}>
+              {saving ? <><span className="mini-spinner" /> Salvando...</> : saved ? <><Check size={16} /> Máquina salva</> : 'Salvar máquina'}
             </button>
             <button type="button" className="button button-outline full" onClick={() => navigate('/admin/maquinas')}>Cancelar</button>
           </section>
@@ -2389,6 +2398,7 @@ function PublicCatalog() {
         } else {
           rows = q.data.map(r => r as unknown as Record<string, unknown>);
         }
+        let effective: Machine[] = demoMachines; // lista realmente carregada (usada p/ montar os filtros)
         if (rows.length > 0) {
           const ids = rows.map(r => String(r.id));
           const photosByMachine: Record<string, MachinePhoto[]> = {};
@@ -2427,8 +2437,10 @@ function PublicCatalog() {
             return mapMachineRow(r);
           });
           setMachines(list);
+          effective = list;
         } else {
           setMachines(demoMachines);
+          effective = demoMachines;
         }
 
         // 2) Categorias
@@ -2440,7 +2452,7 @@ function PublicCatalog() {
         if (catRows.length === 0) {
           // fallback: monta categorias pelas próprias máquinas
           const seen = new Map<string, CategoryChip>();
-          for (const m of machines) {
+          for (const m of effective) {
             if (!m.category) continue;
             const key = m.category.toLowerCase();
             if (!seen.has(key)) seen.set(key, { id: key, name: m.category.toUpperCase(), count: 0 });
@@ -2449,11 +2461,11 @@ function PublicCatalog() {
         }
         // Conta por categoria
         for (const c of catRows) {
-          c.count = machines.filter(m => m.category && (String(m.category_id) === c.id || m.category.toLowerCase() === c.id || m.category.toUpperCase() === c.name)).length;
+          c.count = effective.filter(m => m.category && (String(m.category_id) === c.id || m.category.toLowerCase() === c.id || m.category.toUpperCase() === c.name)).length;
         }
         // Categorias que vieram do nome da máquina (sem category_id) tb contam com count > 0
         const extras = new Map<string, number>();
-        for (const m of machines) {
+        for (const m of effective) {
           if (!m.category) continue;
           const exists = catRows.some(c => c.name.toLowerCase() === m.category.toLowerCase() || c.id === String(m.category_id));
           if (!exists) extras.set(m.category.toUpperCase(), (extras.get(m.category.toUpperCase()) || 0) + 1);
@@ -2486,7 +2498,7 @@ function PublicCatalog() {
         if (brandRows.length === 0) {
           // Fallback: extrai as marcas das próprias máquinas caso a tabela brands não exista
           const seen = new Map<string, BrandChip>();
-          for (const m of machines) {
+          for (const m of effective) {
             if (!m.brand) continue;
             const cleaned = m.brand.trim();
             if (cleaned.length < 2) continue;
@@ -2504,7 +2516,7 @@ function PublicCatalog() {
         }
         // Conta máquinas reais por marca (match case-insensitive)
         for (const b of brandRows) {
-          b.count = machines.filter(m => {
+          b.count = effective.filter(m => {
             if (!m.brand) return false;
             const mb = m.brand.trim().toUpperCase();
             const bb = b.name.trim().toUpperCase();
