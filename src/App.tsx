@@ -104,14 +104,7 @@ function mapMachineRow(row: Record<string, unknown>): Machine {
   };
 }
 
-const demoMachines: Machine[] = [
-  { id: 'm1', brand: 'VOLVO', model: '220D/DL', display_name: 'VOLVO 220D/DL', category: 'ESCAVADEIRA', value: 650900, entry: 56300, installment: 5900, year: 2023, status: 'available', image: 'https://images.pexels.com/photos/162568/construction-site-machinery-construction-work-162568.jpeg?auto=compress&cs=tinysrgb&w=900', photos: [{ public_url: 'https://images.pexels.com/photos/162568/construction-site-machinery-construction-work-162568.jpeg?auto=compress&cs=tinysrgb&w=900', is_primary: true }], power: '145 HP', weight: '22.000 kg', hours: '2.840 h', location: 'São Paulo, SP', applications: ['Terraplenagem', 'Infraestrutura', 'Saneamento'], specs: { Potência: '145 HP', 'Peso operacional': '22.000 kg', 'Profundidade máxima': '6,7 m', 'Alcance máximo': '9,9 m', Motor: 'Volvo D7', Transmissão: 'Hidrostática', 'Força de escavação': '15.200 kgf' } },
-  { id: 'm2', brand: 'CATERPILLAR', model: '320', display_name: 'CATERPILLAR 320', category: 'ESCAVADEIRA', value: 647000, entry: 50300, installment: 6000, year: 2024, status: 'available', image: 'https://images.pexels.com/photos/4481327/pexels-photo-4481327.jpeg?auto=compress&cs=tinysrgb&w=900', photos: [{ public_url: 'https://images.pexels.com/photos/4481327/pexels-photo-4481327.jpeg?auto=compress&cs=tinysrgb&w=900', is_primary: true }], power: '145 HP', weight: '21.600 kg', hours: '1.920 h', location: 'Goiânia, GO', applications: ['Terraplenagem', 'Abertura de valas', 'Mineração'], specs: { Potência: '145 HP', 'Peso operacional': '21.600 kg', 'Profundidade máxima': '6,7 m', 'Alcance máximo': '9,9 m', Motor: 'Cat C4.4', Transmissão: 'Hidrostática', 'Força de escavação': '14.800 kgf' } },
-  { id: 'm3', brand: 'VOLVO', model: 'EC140', display_name: 'VOLVO EC140', category: 'ESCAVADEIRA', value: 546000, entry: 49293.80, installment: 4942.12, year: 2022, status: 'available', power: '105 HP', weight: '14.200 kg', hours: '3.210 h', location: 'Curitiba, PR', applications: ['Terraplenagem', 'Infraestrutura'], specs: { Potência: '105 HP', 'Peso operacional': '14.200 kg', 'Profundidade máxima': '5,5 m', Motor: 'Volvo D4', Transmissão: 'Hidrostática' }, photos: [] },
-  { id: 'm4', brand: 'JCB', model: '3CX', display_name: 'JCB 3CX', category: 'RETROESCAVADEIRA', value: 389900, entry: 38990, installment: 3790, year: 2023, status: 'negotiating', power: '92 HP', weight: '8.070 kg', hours: '1.100 h', location: 'Belo Horizonte, MG', applications: ['Obras urbanas', 'Saneamento'], specs: { Potência: '92 HP', 'Peso operacional': '8.070 kg', Motor: 'JCB EcoMAX', Transmissão: 'Powershift' }, photos: [] },
-  { id: 'm5', brand: 'CASE', model: '580N', display_name: 'CASE 580N', category: 'RETROESCAVADEIRA', value: 368000, entry: 36800, installment: 3590, year: 2021, status: 'available', power: '85 HP', weight: '7.900 kg', hours: '4.120 h', location: 'Recife, PE', applications: ['Terraplenagem', 'Agricultura'], specs: { Potência: '85 HP', 'Peso operacional': '7.900 kg', Motor: 'FPT', Transmissão: 'Powershuttle' }, photos: [] },
-  { id: 'm6', brand: 'BOBCAT', model: 'S450', display_name: 'BOBCAT S450', category: 'MINI CARREGADEIRA', value: 239900, entry: 23990, installment: 2350, year: 2024, status: 'available', power: '49 HP', weight: '2.436 kg', hours: '320 h', location: 'São Paulo, SP', applications: ['Paisagismo', 'Obras urbanas'], specs: { Potência: '49 HP', 'Peso operacional': '2.436 kg', Motor: 'Kubota', Transmissão: 'Hidrostática' }, photos: [] },
-];
+
 
 const demoBrands: Brand[] = [
   { id: 'b1', name: 'Eixo Consórcios', accent_color: '#B8963F', is_active: true },
@@ -124,9 +117,41 @@ const demoSegments: Segment[] = [
 ];
 const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const date = (value: string | Date) => new Date(value).toLocaleDateString('pt-BR');
+const PAGE_SIZE = 9; // máquinas renderizadas por vez na vitrine (renderização progressiva)
 
 function Logo({ compact = false }: { compact?: boolean }) { return <div className="brand-lockup"><div className="brand-mark" style={{ padding: 0, overflow: 'hidden' }}><img src="/favicon.png" alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} /></div>{!compact && <div><strong>Eixo<span>-Catálogo</span></strong><small>OPERAÇÃO COMERCIAL</small></div>}</div>; }
 function Loading() { return <div className="loading-screen"><div className="spinner" /><span>Carregando seu ambiente...</span></div>; }
+
+// Gera uma URL transformada (menor) para imagens do Supabase Storage.
+// Se a URL não for do Storage (ou a transformação estiver desabilitada), devolve a original.
+function thumbUrl(url: string | undefined | null, width = 480): string {
+  if (!url) return '';
+  const marker = '/storage/v1/object/public/';
+  const i = url.indexOf(marker);
+  if (i === -1) return url;
+  const prefix = url.slice(0, i);
+  const rest = url.slice(i + marker.length);
+  const sep = rest.includes('?') ? '&' : '?';
+  return `${prefix}/storage/v1/render/image/public/${rest}${sep}width=${width}&quality=72&resize=contain`;
+}
+
+// Imagem com lazy-load + thumbnail automático e fallback para a URL original em caso de erro.
+function SmartImg({ src, alt, width = 480, priority = false, style, className }: {
+  src: string; alt: string; width?: number; priority?: boolean; style?: CSSProperties; className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <img
+      src={failed || !src ? src : thumbUrl(src, width)}
+      alt={alt}
+      className={className}
+      style={style}
+      loading={priority ? 'eager' : 'lazy'}
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 async function getProfile(userId: string): Promise<Profile> {
   // 1) Tenta TABELA NOVA usuarios_perfil (estrutura do usuário: id, nome, papel, criado_em)
@@ -285,13 +310,13 @@ function MachineDetail({ machines }: { machines: Machine[] }) {
             <div className="detail-gallery">
               <button className="detail-main-image" onClick={() => currentImgUrl && setZoom(true)}>
                 {currentImgUrl
-                  ? <img src={currentImgUrl} alt={machine.display_name} />
+                  ? <img src={currentImgUrl} alt={machine.display_name} loading="eager" decoding="async" />
                   : <div className="image-placeholder large"><ImageIcon size={42} /><span>FOTO NÃO CADASTRADA</span></div>}
               </button>
               <div className="thumb-row">
                 {validPhotos.length === 0 && (
                   <div className="thumb active">
-                    {machine.image ? <img src={machine.image} alt="Miniatura" /> : <ImageIcon size={16} />}
+                    {machine.image ? <img src={machine.image} alt="Miniatura" loading="lazy" decoding="async" /> : <ImageIcon size={16} />}
                   </div>
                 )}
                 {validPhotos.map((p, i) => (
@@ -302,7 +327,7 @@ function MachineDetail({ machines }: { machines: Machine[] }) {
                     onClick={() => setActiveIndex(i)}
                     title={`Foto ${i + 1}${isPrincipalPhoto(p) ? ' · Principal' : ''}`}
                   >
-                    {p.public_url ? <img src={p.public_url} alt={`Miniatura ${i + 1}`} /> : <ImageIcon size={16} />}
+                    {p.public_url ? <img src={p.public_url} alt={`Miniatura ${i + 1}`} loading="lazy" decoding="async" /> : <ImageIcon size={16} />}
                   </button>
                 ))}
               </div>
@@ -365,7 +390,7 @@ function MachineDetail({ machines }: { machines: Machine[] }) {
         <div className="modal-backdrop" onClick={() => setZoom(false)}>
           <div className="zoom-modal" onClick={e => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setZoom(false)}><X /></button>
-            <img src={currentImgUrl} alt={machine.display_name} />
+            <img src={currentImgUrl} alt={machine.display_name} loading="eager" decoding="async" />
           </div>
         </div>
       )}
@@ -452,7 +477,7 @@ function Compare({ machines }: { machines: Machine[] }) {
                     border: '1px solid #ede2c0', flexShrink: 0,
                   }}>
                     {m.photos?.[0]?.public_url || m.image ? (
-                      <img src={m.photos?.[0]?.public_url || m.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img src={m.photos?.[0]?.public_url || m.image} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : (
                       <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
                         <Package size={22} style={{ color: '#b8963f' }} />
@@ -515,7 +540,7 @@ function Compare({ machines }: { machines: Machine[] }) {
                 title={disabled ? 'Máximo de 3 selecionadas' : undefined}
                 style={disabled ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
               >
-                <span>{m.photos?.[0]?.public_url || m.image ? <img src={m.photos?.[0]?.public_url || m.image} alt="" /> : <Package size={18} />}</span>
+                <span>{m.photos?.[0]?.public_url || m.image ? <img src={m.photos?.[0]?.public_url || m.image} alt="" loading="lazy" decoding="async" /> : <Package size={18} />}</span>
                 <div style={{ textAlign: 'left', flex: 1 }}>
                   <strong>{m.display_name}</strong>
                   <small>{m.category} · {money(m.value)}</small>
@@ -542,7 +567,7 @@ function Compare({ machines }: { machines: Machine[] }) {
               <article className="comparison-card" key={m.id}>
                 <div className="compare-image">
                   {m.photos?.[0]?.public_url || m.image
-                    ? <img src={m.photos?.[0]?.public_url || m.image} alt={m.display_name} />
+                    ? <img src={m.photos?.[0]?.public_url || m.image} alt={m.display_name} loading="lazy" decoding="async" />
                     : <ImageIcon size={30} />}
                 </div>
                 <span className="eyebrow gold">{m.brand || '-'}</span>
@@ -1392,6 +1417,8 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
                           <img
                             src={p.preview}
                             alt="Prévia anexada"
+                            loading="lazy"
+                            decoding="async"
                             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                           />
                         </button>
@@ -2365,12 +2392,14 @@ function PublicCatalog() {
   const navigate = useNavigate();
   const location = useLocation();
   const [loading, setLoading] = useState(true);
-  const [machines, setMachines] = useState<Machine[]>(demoMachines);
+  const [machines, setMachines] = useState<Machine[]>([]);
   const [categories, setCategories] = useState<CategoryChip[]>([]);
   const [brands, setBrands] = useState<BrandChip[]>([]);
   const [query, setQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+  // Renderização progressiva: mostra PAGE_SIZE máquinas e carrega mais conforme o usuário rola
+  const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
 
   // ============ Carrega dados (público, sem profile necessário) ============
   useEffect(() => {
@@ -2398,7 +2427,7 @@ function PublicCatalog() {
         } else {
           rows = q.data.map(r => r as unknown as Record<string, unknown>);
         }
-        let effective: Machine[] = demoMachines; // lista realmente carregada (usada p/ montar os filtros)
+        let effective: Machine[] = []; // lista realmente carregada (usada p/ montar os filtros)
         if (rows.length > 0) {
           const ids = rows.map(r => String(r.id));
           const photosByMachine: Record<string, MachinePhoto[]> = {};
@@ -2439,8 +2468,9 @@ function PublicCatalog() {
           setMachines(list);
           effective = list;
         } else {
-          setMachines(demoMachines);
-          effective = demoMachines;
+          // Sem máquinas no banco: vitrine vazia (sem dados de demonstração)
+          setMachines([]);
+          effective = [];
         }
 
         // 2) Categorias
@@ -2575,6 +2605,32 @@ function PublicCatalog() {
   }
   const groupOrder = Array.from(groupedByCategory.keys()).sort();
 
+  // Reinicia a paginação sempre que os filtros mudam
+  useEffect(() => { setVisibleLimit(PAGE_SIZE); }, [query, selectedCategory, selectedBrand]);
+
+  // A lista "achatada" (na ordem dos grupos) permite fatiar por PAGE_SIZE mantendo o agrupamento
+  const orderedItems = groupOrder.flatMap(cat => (groupedByCategory.get(cat) || []).map(m => ({ cat, m })));
+  const totalItems = orderedItems.length;
+  const visibleItems = orderedItems.slice(0, visibleLimit);
+  const visibleGrouped = new Map<string, Machine[]>();
+  for (const { cat, m } of visibleItems) {
+    if (!visibleGrouped.has(cat)) visibleGrouped.set(cat, []);
+    visibleGrouped.get(cat)!.push(m);
+  }
+  const visibleGroupOrder = Array.from(visibleGrouped.keys());
+
+  // Carrega mais máquinas ao aproximar o fim da lista (scroll infinito via janela)
+  useEffect(() => {
+    if (totalItems <= PAGE_SIZE) return;
+    const onScroll = () => {
+      const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 700;
+      if (nearBottom) setVisibleLimit(l => (l < totalItems ? Math.min(l + PAGE_SIZE, totalItems) : l));
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [totalItems, visibleLimit]);
+
   // ============ Funções de card ============
   const goDetail = (id: string) => navigate(`/maquina/${id}`, { state: { fromPublic: true } });
   const copyOffer = (m: Machine) => {
@@ -2695,9 +2751,11 @@ function PublicCatalog() {
                 marginLeft: i === 1 ? -40 : 0,
                 boxShadow: '0 8px 30px rgba(184, 150, 63, 0.14)',
                 zIndex: i === 0 ? 2 : 1,
+                position: 'relative',
               }}>
+                {src && <div className="img-shimmer" aria-hidden="true" />}
                 {src ? (
-                  <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  <SmartImg src={src} alt="" width={800} priority style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
                 ) : (
                   <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
                     <ImageIcon size={52} style={{ color: '#b8963f', opacity: 0.75 }} />
@@ -2826,8 +2884,8 @@ function PublicCatalog() {
             </button>
           </div>
         ) : (
-          groupOrder.map(catName => {
-            const list = groupedByCategory.get(catName)!;
+          visibleGroupOrder.map(catName => {
+            const list = visibleGrouped.get(catName)!;
             return (
               <section key={catName} style={{ marginBottom: 34 }}>
                 <div style={{
@@ -2883,9 +2941,11 @@ function PublicCatalog() {
                           borderBottom: '1px solid #ece4d0',
                           overflow: 'hidden',
                         }}>
+                          {primaryImg && <div className="img-shimmer" aria-hidden="true" />}
                           {primaryImg ? (
-                            <img src={primaryImg} alt={m.display_name} style={{
+                            <SmartImg src={primaryImg} alt={m.display_name} width={480} style={{
                               width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+                              position: 'relative', zIndex: 1,
                             }} />
                           ) : (
                             <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center' }}>
@@ -2998,6 +3058,16 @@ function PublicCatalog() {
             );
           })
         )}
+        {!loading && totalItems > 0 && visibleLimit < totalItems && (
+          <p className="muted" style={{ textAlign: 'center', fontSize: 13, padding: '18px 0' }}>
+            Role para ver mais máquinas…
+          </p>
+        )}
+        {!loading && totalItems > 0 && visibleLimit >= totalItems && (
+          <p className="muted" style={{ textAlign: 'center', fontSize: 13, padding: '20px 0' }}>
+            Você viu todas as {totalItems} máquinas disponíveis.
+          </p>
+        )}
       </main>
 
       {/* ===================== FOOTER PÚBLICO ===================== */}
@@ -3030,7 +3100,7 @@ function PublicCatalog() {
 function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [machines, setMachines] = useState<Machine[]>(demoMachines);
+  const [machines, setMachines] = useState<Machine[]>([]);
 
   // Carregamento de máquinas (tanto público quanto autenticado)
   // Carrega MESMO SEM profile — RLS tem SELECT público para visitantes
@@ -3117,7 +3187,9 @@ function App() {
         return mapMachineRow(r);
       }));
     })();
-  }, []);
+    // Recarrega quando o usuário autentica/sai: anônimo só vê status visíveis,
+    // admin vê todos — sem isso a lista do admin ficava vazia após o login.
+  }, [profile?.id]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {

@@ -133,6 +133,10 @@ h1,h2,h3,h4,strong,b { font-family:'Manrope',sans-serif; } h1,h2,h3,p { margin: 
 /* Rodapé de ações do modal */
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
 .button:disabled{opacity:.6;cursor:not-allowed}
+
+/* Skeleton de imagem (shimmer) — evita "piscar" imagem demo/placeholder antes de carregar a real */
+.img-shimmer{position:absolute;inset:0;z-index:0;background:linear-gradient(100deg,#f3efe2 30%,#ece5d3 50%,#f3efe2 70%);background-size:200% 100%;animation:imgShimmer 1.3s linear infinite}
+@keyframes imgShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 @media (max-width:560px){
   .modal-actions{flex-direction:column-reverse}
   .modal-actions .button{width:100%}
