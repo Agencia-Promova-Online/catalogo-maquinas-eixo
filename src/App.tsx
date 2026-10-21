@@ -1025,7 +1025,11 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
   const save = async (event: FormEvent) => {
     event.preventDefault();
     if (saving) return; // evita duplo clique gerar cadastros duplicados
-    if (!form.brand || !form.model) return;
+    if (!form.brand || !form.model) {
+      setUploadMessage('❌ Preencha a marca e o modelo antes de salvar.');
+      return;
+    }
+    setUploadMessage('');
     setSaving(true);
     try {
     const normalized: Machine = {
@@ -1060,14 +1064,22 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
     let machineIdForPhotos = existing?.id;
     if (existing) {
       const { error } = await supabase.from('machines').update(payload).eq('id', existing.id);
-      if (error) { console.error('update error', error); return; }
+      if (error) {
+        console.error('update error', error);
+        setUploadMessage('❌ Não foi possível salvar a máquina: ' + error.message);
+        return;
+      }
     } else {
       const { data: inserted, error } = await supabase
         .from('machines')
         .insert([payload])
         .select('*')
         .maybeSingle();
-      if (error || !inserted) { console.error('insert error', error); return; }
+      if (error || !inserted) {
+        console.error('insert error', error);
+        setUploadMessage('❌ Não foi possível salvar a máquina: ' + (error?.message || 'o banco não retornou o novo registro.'));
+        return;
+      }
       normalized.id = String((inserted as Record<string, unknown>).id);
       normalized.category_id = (inserted as Record<string, unknown>).category_id as string | undefined;
       machineIdForPhotos = normalized.id;
@@ -1135,6 +1147,9 @@ function MachineForm({ machines, setMachines }: { machines: Machine[]; setMachin
     // Após salvar, volta para a listagem: a próxima edição passa a carregar a máquina existente,
     // então "Salvar" ATUALIZA o registro em vez de criar cadastros duplicados.
     navigate('/admin/maquinas');
+    } catch (cause) {
+      console.error('save machine error', cause);
+      setUploadMessage('❌ Não foi possível salvar a máquina: ' + (cause instanceof Error ? cause.message : 'erro inesperado.'));
     } finally {
       setSaving(false);
     }
