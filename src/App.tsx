@@ -117,6 +117,24 @@ const demoSegments: Segment[] = [
 ];
 const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const date = (value: string | Date) => new Date(value).toLocaleDateString('pt-BR');
+// Mensagem da oferta para copiar/compartilhar (WhatsApp) — usada na vitrine e na página de detalhes
+function buildOfferText(m: Machine): string {
+  const power = m.power && m.power.toLowerCase() !== 'não informado' ? m.power : '';
+  return [
+    `🚜 ${m.category} ${m.brand} ${m.model} | ${m.year}`,
+    '',
+    '🏗️ Informações do Equipamento',
+    `🔹 Marca: ${m.brand}`,
+    `🔹 Modelo: ${m.model}`,
+    `🔹 Ano: ${m.year}`,
+    power ? `🔹 Potência: ${power}` : null,
+    '',
+    '💰 Informações de Valores',
+    `💵 Valor total: ${money(m.value)}`,
+    `💳 Entrada: ${money(m.entry)}`,
+    `📆 Parcela mensal: ${money(m.installment)}/mês`,
+  ].filter((line): line is string => line !== null).join('\n');
+}
 const PAGE_SIZE = 9; // máquinas renderizadas por vez na vitrine (renderização progressiva)
 
 function Logo({ compact = false }: { compact?: boolean }) { return <div className="brand-lockup"><div className="brand-mark" style={{ padding: 0, overflow: 'hidden' }}><img src="/favicon.png" alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} /></div>{!compact && <div><strong>Eixo<span>-Catálogo</span></strong><small>OPERAÇÃO COMERCIAL</small></div>}</div>; }
@@ -299,7 +317,7 @@ function MachineDetail({ machines }: { machines: Machine[] }) {
   useEffect(() => { setActiveIndex(0); }, [machine.id]);
   const currentImgUrl: string | undefined = validPhotos[activeIndex]?.public_url ?? machine.image;
 
-  const offer = `🚜 *${machine.category} ${machine.display_name}*\n💰 *Valor:* ${money(machine.value)}\n✅ *Entrada:* ${money(machine.entry)}\n📅 *Parcelas:* a partir de: ${money(machine.installment)}`;
+  const offer = buildOfferText(machine);
   const copy = async () => { await navigator.clipboard?.writeText(offer); setCopied(true); setTimeout(() => setCopied(false), 1800); };
   return (
     <div className="public-home" style={{ minHeight: '100vh', background: '#f5f2ec' }}>
@@ -2649,16 +2667,7 @@ function PublicCatalog() {
   // ============ Funções de card ============
   const goDetail = (id: string) => navigate(`/maquina/${id}`, { state: { fromPublic: true } });
   const copyOffer = (m: Machine) => {
-    const lines = [
-      `*${m.display_name.toUpperCase()}*`,
-      `*Valor:* ${money(m.value)}`,
-      `*Entrada:* ${money(m.entry)}`,
-      `*Parcela:* ${money(m.installment)}/mês`,
-      m.year ? `*Ano:* ${m.year}` : null,
-      m.power ? `*Potência:* ${m.power}` : null,
-      m.hours ? `*Horas:* ${m.hours}` : null,
-      m.location ? `*Local:* ${m.location}` : null,
-    ].filter(Boolean).join('\n');
+    const lines = buildOfferText(m);
     try {
       if (navigator.clipboard) navigator.clipboard.writeText(lines);
       alert('Oferta copiada!');
